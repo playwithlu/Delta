@@ -268,7 +268,7 @@ private extension SettingsViewController
             guard #unavailable(iOS 15) else { return false }
             
             // OSLogStore is not available on iOS 14, so section is only visible if experimental features is visible.
-            return !PurchaseManager.shared.isExperimentalFeaturesAvailable
+            return PurchaseManager.shared.isExperimentalFeaturesAvailable
             
         #if LEGACY || BETA
         case .patreon: return true

@@ -251,8 +251,8 @@ class GameViewController: DeltaCore.GameViewController
         
         NotificationCenter.default.addObserver(self, selector: #selector(GameViewController.didActivateGyro(with:)), name: GBA.didActivateGyroNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(GameViewController.didDeactivateGyro(with:)), name: GBA.didDeactivateGyroNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(GameViewController.didConnectOnline(with:)), name: MelonDS.didConnectToWFCNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(GameViewController.didDisconnectFromOnline(with:)), name: MelonDS.didDisconnectFromWFCNotification, object: nil)
+       //NotificationCenter.default.addObserver(self, selector: #selector(GameViewController.didConnectOnline(with:)), name: MelonDS.didConnectToWFCNotification, object: nil)
+       //NotificationCenter.default.addObserver(self, selector: #selector(GameViewController.didDisconnectFromOnline(with:)), name: MelonDS.didDisconnectFromWFCNotification, object: nil)
         
         NotificationCenter.default.addObserver(self, selector: #selector(GameViewController.emulationDidQuit(with:)), name: EmulatorCore.emulationDidQuitNotification, object: nil)
         

@@ -476,7 +476,7 @@
 		BFEF24F21F7DD4FB00454C62 /* SaveStateMigrationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveStateMigrationPolicy.swift; sourceTree = "<group>"; };
 		BFF0742B1E9DC17500ACDF4A /* GBCDeltaCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = GBCDeltaCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFA4C081E8A24D600D87934 /* GameTableViewCell.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GameTableViewCell.swift; sourceTree = "<group>"; };
-		BFFA71D71AAC406100EE9DD1 /* Delta.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Delta.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BFFA71D71AAC406100EE9DD1 /* Lu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFFA71DB1AAC406100EE9DD1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		BFFA71DC1AAC406100EE9DD1 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		BFFA71E11AAC406100EE9DD1 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
@@ -1118,7 +1118,7 @@
 		BFFA71D81AAC406100EE9DD1 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				BFFA71D71AAC406100EE9DD1 /* Delta.app */,
+				BFFA71D71AAC406100EE9DD1 /* Lu.app */,
 				D5D7C1F129E60DFF00663793 /* libDeltaFeatures.a */,
 				D539102F29E88B6B0006B350 /* DeltaPreviews.framework */,
 			);
@@ -1445,7 +1445,7 @@
 				D52CB8C52CE2B7B600B04458 /* RevenueCat */,
 			);
 			productName = Delta;
-			productReference = BFFA71D71AAC406100EE9DD1 /* Delta.app */;
+			productReference = BFFA71D71AAC406100EE9DD1 /* Lu.app */;
 			productType = "com.apple.product-type.application";
 		};
 		D539102E29E88B6B0006B350 /* DeltaPreviews */ = {
@@ -2169,13 +2169,13 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 131;
-				DEVELOPMENT_TEAM = 6XVY5G3U44;
+				DEVELOPMENT_TEAM = 2YUST4JW5T;
 				INFOPLIST_FILE = "Delta/Supporting Files/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7b4;
+				MARKETING_VERSION = 1.7.4;
 				OTHER_LDFLAGS = (
 					"-ld64",
 					"-ObjC",
@@ -2224,7 +2224,8 @@
 					"\"AuthenticationServices\"",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" -DDEBUG";
-				PRODUCT_BUNDLE_IDENTIFIER = com.rileytestut.Delta;
+				PRODUCT_BUNDLE_IDENTIFIER = com.LuInc.Lu;
+				PRODUCT_NAME = Lu;
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = YES;
@@ -2251,23 +2252,25 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 131;
-				DEVELOPMENT_TEAM = 6XVY5G3U44;
+				DEVELOPMENT_TEAM = 2YUST4JW5T;
 				INFOPLIST_FILE = "Delta/Supporting Files/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7b4;
+				MARKETING_VERSION = 1.7.4;
 				OTHER_LDFLAGS = (
 					"-ld64",
 					"${inherited}",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" -DIMPACTOR";
-				PRODUCT_BUNDLE_IDENTIFIER = com.rileytestut.Delta;
+				PRODUCT_BUNDLE_IDENTIFIER = com.LuInc.Lu;
+				PRODUCT_NAME = Lu;
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = YES;
 				STRIP_STYLE = "non-global";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "STATIC_LIBRARY FRAMEWORK NATIVE BETA";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_INCLUDE_PATHS = "$(inherited) \"$(SRCROOT)/Cores/GPGXDeltaCore/Sources/GPGXBridge\"";
 				SWIFT_OBJC_BRIDGING_HEADER = "Delta/Supporting Files/Delta-Bridging-Header.h";

@@ -273,9 +273,9 @@ extension GameCollectionViewController
                 }
                 
                 emulatorBridge.isJITEnabled = ProcessInfo.processInfo.isJITAvailable
-                emulatorBridge.isWFCEnabled = ExperimentalFeatures.shared.dsOnlineMultiplayer.isEnabled
-                emulatorBridge.gbaGameURL = game.secondaryGame?.fileURL
-                emulatorBridge.wfcDNS = Settings.preferredWFCServer
+                //emulatorBridge.isWFCEnabled = //ExperimentalFeatures.shared.dsOnlineMultiplayer.isEnabled
+                //emulatorBridge.gbaGameURL = game.secondaryGame?.fileURL
+                //emulatorBridge.wfcDNS = Settings.preferredWFCServer
             }
             
             if let saveState = self.activeSaveState /* && self.isResumingGame */ // activeSaveState can be non-nil even when not resuming game.
@@ -347,14 +347,17 @@ extension GameCollectionViewController
         
         do
         {
-            try self.validateLaunchingGame(game, ignoringErrors: [LaunchError.alreadyRunning, LaunchError.multiplayerSessionActive(nil)])
+            // Create type-safe errors to ignore
+            let ignoreRunning = LaunchError.alreadyRunning
+            let ignoreMultiplayer = LaunchError.multiplayerSessionActive(nil)
+            try self.validateLaunchingGame(game, ignoringErrors: [ignoreRunning, ignoreMultiplayer])
             
             // Clear screen
             self.activeEmulatorCore?.gameViews.forEach { $0.inputImage = nil }
             
             self.performSegue(withIdentifier: "unwindFromGames", sender: game)
         }
-        catch
+        catch let error as LaunchError
         {
             self.isResumingGame = false
             
@@ -362,11 +365,11 @@ extension GameCollectionViewController
             
             if error.recoveryActions.isEmpty
             {
-                alertController.addAction(.ok)
+                alertController.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: ""), style: .default))
             }
             else
             {
-                alertController.addAction(.cancel)
+                alertController.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: ""), style: .cancel))
                 
                 for action in error.recoveryActions
                 {
@@ -375,6 +378,10 @@ extension GameCollectionViewController
             }
             
             self.present(alertController, animated: true, completion: nil)
+        }
+        catch {
+            // Handle any error
+            print("Failed to launch game: \(error)")
         }
         
         // The game hasn't changed, so the activeEmulatorCore is the same as before, so we need to enable videoManager it again
@@ -519,7 +526,7 @@ private extension GameCollectionViewController
             {
                 self.isResumingGame = false
                 
-                switch error
+                switch error as! LaunchError
                 {
                 case .alreadyRunning:
                     let alertController = UIAlertController(title: NSLocalizedString("Game Paused", comment: ""), message: NSLocalizedString("Would you like to resume where you left off, or restart the game?", comment: ""), preferredStyle: .alert)
@@ -549,13 +556,17 @@ private extension GameCollectionViewController
                         // Disable videoManager to prevent flash of black
                         self.activeEmulatorCore?.videoManager.isEnabled = false
                         
-                        launchGame(ignoringErrors: [LaunchError.alreadyRunning, LaunchError.multiplayerSessionActive(nil)])
+                        let ignoreRunning = LaunchError.alreadyRunning
+                        let ignoreMultiplayer = LaunchError.multiplayerSessionActive(nil)
+                        launchGame(ignoringErrors: [ignoreRunning, ignoreMultiplayer])
                         
                         // The game hasn't changed, so the activeEmulatorCore is the same as before, so we need to enable videoManager it again
                         self.activeEmulatorCore?.videoManager.isEnabled = true
                     }))
                     alertController.addAction(UIAlertAction(title: NSLocalizedString("Restart", comment: ""), style: .destructive, handler: { (action) in
-                        launchGame(ignoringErrors: [LaunchError.alreadyRunning, LaunchError.multiplayerSessionActive(nil)])
+                        let ignoreRunning = LaunchError.alreadyRunning
+                        let ignoreMultiplayer = LaunchError.multiplayerSessionActive(nil)
+                        launchGame(ignoringErrors: [ignoreRunning, ignoreMultiplayer])
                     }))
                     self.present(alertController, animated: true)
                     
@@ -564,24 +575,25 @@ private extension GameCollectionViewController
                     alertController.addAction(UIAlertAction(title: NSLocalizedString("Import Files", comment: ""), style: .default) { _ in
                         self.performSegue(withIdentifier: "showDSSettings", sender: nil)
                     })
-                    alertController.addAction(.cancel)
+                    alertController.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: ""), style: .cancel))
                     
                     self.present(alertController, animated: true, completion: nil)
                     
                 case .downloadingGameSave, .systemAlreadyRunning, .multiplayerSessionActive:
-                    let alertController = UIAlertController(title: error.errorTitle, message: error.localizedDescription, preferredStyle: .alert)
+                    let alertController = UIAlertController(title: "Error Title", message: error.localizedDescription, preferredStyle: .alert)
                     
-                    if error.recoveryActions.isEmpty
+                    if let launchError = error as? LaunchError, launchError.recoveryActions.isEmpty
                     {
-                        alertController.addAction(.ok)
+                        alertController.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: ""), style: .default))
                     }
                     else
                     {
-                        alertController.addAction(.cancel)
-                        
-                        for action in error.recoveryActions
-                        {
-                            alertController.addAction(action)
+                        alertController.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: ""), style: .cancel))
+                        if let launchError = error as? LaunchError {
+                            for action in launchError.recoveryActions
+                            {
+                                alertController.addAction(action)
+                            }
                         }
                     }
                     
@@ -592,7 +604,8 @@ private extension GameCollectionViewController
         
         if ignoreAlreadyRunningError
         {
-            launchGame(ignoringErrors: [LaunchError.alreadyRunning])
+            let ignoreRunning = LaunchError.alreadyRunning
+            launchGame(ignoringErrors: [ignoreRunning])
         }
         else
         {
@@ -600,12 +613,16 @@ private extension GameCollectionViewController
         }
     }
     
-    private func validateLaunchingGame(_ game: Game, ignoringErrors ignoredErrors: [Error]) throws(LaunchError)
+    private func validateLaunchingGame(_ game: Game, ignoringErrors ignoredErrors: [Error]) throws
     {
-        let ignoredErrors = ignoredErrors.map { $0 as NSError }
+        let shouldIgnoreAlreadyRunning = ignoredErrors.contains { error in
+            if let launchError = error as? LaunchError, case .alreadyRunning = launchError {
+                return true
+            }
+            return false
+        }
         
-        if !ignoredErrors.contains(where: { $0.domain == (LaunchError.alreadyRunning as NSError).domain && $0.code == (LaunchError.alreadyRunning as NSError).code })
-        {
+        if !shouldIgnoreAlreadyRunning {
             guard game.fileURL != self.activeEmulatorCore?.game.fileURL else { throw LaunchError.alreadyRunning }
         }
         
@@ -616,11 +633,14 @@ private extension GameCollectionViewController
             
             if let activeEmulatorCore, activeEmulatorCore.isWirelessMultiplayerActive
             {
-                if !ignoredErrors.contains(where: {
-                    $0.domain == (LaunchError.alreadyRunning as NSError).domain &&
-                    $0.code == (LaunchError.multiplayerSessionActive(nil) as NSError).code
-                })
-                {
+                let shouldIgnoreMultiplayer = ignoredErrors.contains { error in
+                    if let launchError = error as? LaunchError, case .multiplayerSessionActive = launchError {
+                        return true
+                    }
+                    return false
+                }
+                
+                if !shouldIgnoreMultiplayer {
                     // Current scene has emulator core running in background with active multiplayer session.
                     throw LaunchError.multiplayerSessionActive(activeEmulatorCore)
                 }
@@ -771,8 +791,8 @@ private extension GameCollectionViewController
     
     func openInNewWindow(_ game: Game)
     {
-        do
-        {
+        do {
+            // Pass empty array for no ignored errors
             try self.validateLaunchingGame(game, ignoringErrors: [])
             
             let userActivity = NSUserActivity(game: game)
@@ -790,27 +810,11 @@ private extension GameCollectionViewController
                     Logger.main.error("Failed to open game \(game.name, privacy: .public) in new window. \(error.localizedDescription, privacy: .public)")
                 }
             }
+        }catch {
+            // Handle any error
+            print("Failed to launch game: \(error)")
         }
-        catch let error
-        {
-            let alertController = UIAlertController(title: error.errorTitle, message: error.localizedDescription, preferredStyle: .alert)
-            
-            if error.recoveryActions.isEmpty
-            {
-                alertController.addAction(.ok)
-            }
-            else
-            {
-                alertController.addAction(.cancel)
-                
-                for action in error.recoveryActions
-                {
-                    alertController.addAction(action)
-                }
-            }
-            
-            self.present(alertController, animated: true, completion: nil)
-        }
+        ;
     }
     
     func delete(_ game: Game)
@@ -1356,7 +1360,8 @@ extension GameCollectionViewController
         
         do
         {
-            try self.validateLaunchingGame(game, ignoringErrors: [LaunchError.alreadyRunning])
+            let ignoreRunning = LaunchError.alreadyRunning
+            try self.validateLaunchingGame(game, ignoringErrors: [ignoreRunning])
         }
         catch LaunchError.systemAlreadyRunning(let activeGame?, _) where activeGame == game
         {
@@ -1385,7 +1390,8 @@ extension GameCollectionViewController
             
             do
             {
-                try self.validateLaunchingGame(game, ignoringErrors: [LaunchError.alreadyRunning])
+                let ignoreRunning = LaunchError.alreadyRunning
+                try self.validateLaunchingGame(game, ignoringErrors: [ignoreRunning])
             }
             catch
             {

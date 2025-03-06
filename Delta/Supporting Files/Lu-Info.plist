@@ -9,6 +9,10 @@
 	<key>FEEDBACK_TIMEOUT</key>
 	<integer>10</integer>
 	<key>LU_BASE_URL</key>
-	<string>https://api.lulabs.ai/delta</string>
+	<string>https://jo4h0f6euk.execute-api.us-east-1.amazonaws.com/delta</string>
+	<key>LU_BASE_URL_LOCAL</key>
+	<string>http://192.168.178.250:8000/delta</string>
+	<key>LU_BASE_URL_DEV</key>
+	<string>https://jo4h0f6euk.execute-api.us-east-1.amazonaws.com/delta</string>
 </dict>
 </plist>
