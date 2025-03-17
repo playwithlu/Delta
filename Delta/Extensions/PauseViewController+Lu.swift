@@ -324,17 +324,24 @@ extension PauseViewController {
             self.present(loadingAlert, animated: true)
             
             // Check if game is supported before proceeding
-            self.checkGameSupport(for: game) { supported in
+            self.checkGameSupport(for: game) { result in
                 DispatchQueue.main.async {
                     loadingAlert.dismiss(animated: true) {
-                        if supported {
+                        switch result {
+                        case .supported:
                             if !ExperimentalFeatures.shared.Lu.wrappedValue.didShowWelcomeMessage {
                                 self.showLuWelcomeMessage(for: game)
                             } else {
                                 self.showLuQuestionPrompt(for: game)
                             }
-                        } else {
+                        case .unsupported:
                             self.showUnsupportedGameMessage()
+                        case .error(let message):
+                            if let errorMessage = message {
+                                self.showError(errorMessage)
+                            } else {
+                                self.showError("Unable to check game support. Please try again later.")
+                            }
                         }
                         menuItem.isSelected = false
                     }
@@ -412,14 +419,16 @@ extension PauseViewController {
         let urlString = APIConstants.askBaseURL
         guard let url = URL(string: urlString) else {
             loadingAlert.dismiss(animated: true)
-            self.showError("Failed to create request")
+            luLog(.error, "askLu error: Invalid URL: \(urlString)")
+            self.showError("Unable to connect to Lu. Please try again later. Technical details: Invalid URL format.")
             return
         }
         
         let activeGameId = ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId
         if activeGameId.isEmpty {
             loadingAlert.dismiss(animated: true)
-            self.showError("Failed to prepare your question")
+            luLog(.error, "askLu error: Empty activeGameId")
+            self.showError("Failed to prepare your question. Technical details: Game ID is missing.")
             return
         }
 
@@ -518,7 +527,7 @@ extension PauseViewController {
         } catch {
             luLog(.error, "Failed to encode request: \(error.localizedDescription)")
             loadingAlert.dismiss(animated: true)
-            self.showError("Failed to prepare your question")
+            self.showError("Failed to prepare your question. Technical details: \(error.localizedDescription)")
             return
         }
         
@@ -532,23 +541,28 @@ extension PauseViewController {
                     if let error = error as? URLError {
                         switch error.code {
                         case .timedOut:
-                            self?.showError("Lu is taking longer than usual to respond. Please try again.")
+                            luLog(.error, "askLu error: Request timed out - \(error.localizedDescription)")
+                            self?.showError("Lu is taking longer than usual to respond. Please try again. Technical details: Request timed out.")
                         case .notConnectedToInternet:
-                            self?.showError("No internet connection. Please check your connection and try again.")
+                            luLog(.error, "askLu error: No internet connection - \(error.localizedDescription)")
+                            self?.showError("No internet connection. Please check your connection and try again. Technical details: \(error.localizedDescription)")
                         default:
-                            self?.showError("Unable to connect to Lu. Please try again later.")
+                            luLog(.error, "askLu error: Network error (\(error.code)) - \(error.localizedDescription)")
+                            self?.showError("Unable to connect to Lu. Please try again later. Technical details: \(error.localizedDescription)")
                         }
                         return
                     }
                     
                     guard let httpResponse = response as? HTTPURLResponse else {
-                        self?.showError("Received an invalid response. Please try again.")
+                        luLog(.error, "askLu error: Invalid response - \(String(describing: response))")
+                        self?.showError("Received an invalid response. Please try again. Technical details: Response format was invalid.")
                         return
                     }
                     
                     guard httpResponse.statusCode == 200,
                           let data = data else {
-                        self?.showError("Lu encountered an error. Please try again later.")
+                        luLog(.error, "askLu error: Unexpected status code or missing data - Status: \(httpResponse.statusCode)")
+                        self?.showError("Lu encountered an error. Please try again later. Technical details: Server returned status \(httpResponse.statusCode).")
                         return
                     }
                     
@@ -556,7 +570,8 @@ extension PauseViewController {
                         let luResponse = try JSONDecoder().decode(LuResponse.self, from: data)
                         self?.showLuResponse(response: luResponse, question: question, for: game)
                     } catch {
-                        self?.showError("Failed to understand Lu's response. Please try again.")
+                        luLog(.error, "askLu error: Failed to decode response - \(error.localizedDescription)")
+                        self?.showError("Failed to understand Lu's response. Please try again. Technical details: \(error.localizedDescription)")
                     }
                 }
             }
@@ -707,6 +722,8 @@ extension PauseViewController {
         let urlString = APIConstants.feedbackBaseURL
         guard let url = URL(string: urlString) else {
             loadingAlert.dismiss(animated: true)
+            luLog(.error, "sendFeedback error: Invalid URL: \(urlString)")
+            self.showError("Unable to send feedback. Technical details: Invalid URL format.")
             return
         }
         luLog(.info, "Making request to URL: \(urlString)")
@@ -724,6 +741,8 @@ extension PauseViewController {
             urlRequest.httpBody = try JSONEncoder().encode(feedbackRequest)
         } catch {
             loadingAlert.dismiss(animated: true)
+            luLog(.error, "sendFeedback error: Failed to encode request - \(error.localizedDescription)")
+            self.showError("Unable to send feedback. Technical details: \(error.localizedDescription)")
             return
         }
         
@@ -731,19 +750,44 @@ extension PauseViewController {
             DispatchQueue.main.async {
                 loadingAlert.dismiss(animated: true) {
                     if let error = error {
-                        
-                        let errorAlert = UIAlertController(
-                            title: "Feedback Error",
-                            message: "Failed to send feedback. Please try again later.",
-                            preferredStyle: .alert
-                        )
-                        luLog(.error, "[feedbacks] Failed to send feedback to Lu API")
-                        errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
-                        self?.present(errorAlert, animated: true)
+                        // Check if it's a URLError to handle specific network cases
+                        if let urlError = error as? URLError {
+                            let errorMessage: String
+                            switch urlError.code {
+                            case .timedOut:
+                                errorMessage = "Lu is taking longer than usual to respond. Please try again."
+                                luLog(.error, "sendFeedback error: Request timed out - \(urlError.localizedDescription)")
+                            case .notConnectedToInternet:
+                                errorMessage = "No internet connection. Please check your connection and try again."
+                                luLog(.error, "sendFeedback error: No internet connection - \(urlError.localizedDescription)")
+                            default:
+                                errorMessage = "Unable to connect to Lu. Please try again later."
+                                luLog(.error, "sendFeedback error: Network error (\(urlError.code)) - \(urlError.localizedDescription)")
+                            }
+                            let errorAlert = UIAlertController(
+                                title: "Feedback Error",
+                                message: "\(errorMessage) Technical details: \(urlError.localizedDescription)",
+                                preferredStyle: .alert
+                            )
+                            errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
+                            self?.present(errorAlert, animated: true)
+                        } else {
+                            // For non-URLError cases
+                            let errorAlert = UIAlertController(
+                                title: "Feedback Error",
+                                message: "Failed to send feedback. Please try again later. Technical details: \(error.localizedDescription)",
+                                preferredStyle: .alert
+                            )
+                            luLog(.error, "sendFeedback error: Failed to send feedback - \(error.localizedDescription)")
+                            errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
+                            self?.present(errorAlert, animated: true)
+                        }
                         return
                     }
                     
                     guard let httpResponse = response as? HTTPURLResponse else {
+                        luLog(.error, "sendFeedback error: Invalid response - \(String(describing: response))")
+                        self?.showError("Unable to send feedback. Technical details: Received an invalid response.")
                         return
                     }
                     
@@ -784,7 +828,7 @@ extension PauseViewController {
     private func showUnsupportedGameMessage(){
         let alert = UIAlertController(
             title: "Lu Can't Help You Yet",
-            message: "Sorry, but Lu doesn't support this game just yet. Don't worry—we're already working on getting it onboarded as soon as possible. Thank you so much for giving Lu a try!",
+            message: "Sorry, but Lu doesn't support this game just yet. Don't worry--we're already working on getting it onboarded as soon as possible. Thank you so much for giving Lu a try!",
             preferredStyle: .alert
         )
         
@@ -794,7 +838,14 @@ extension PauseViewController {
         self.present(alert, animated: true)
     }
     
-    private func checkGameSupport(for game: Game, completion: @escaping (Bool) -> Void) {
+    // Define result type for checkGameSupport
+    private enum GameSupportResult {
+        case supported
+        case unsupported
+        case error(message: String?)
+    }
+    
+    private func checkGameSupport(for game: Game, completion: @escaping (GameSupportResult) -> Void) {
         let sha1 = game.identifier.uppercased()
         
         // Log the check-rom request
@@ -802,9 +853,9 @@ extension PauseViewController {
         
         let urlString = "\(APIConstants.supportBaseURL)?sha1=\(sha1)"
         guard let url = URL(string: urlString) else {
-            luLog(.error, "Invalid URL for check-rom endpoint")
-            showError("Sorry, but Lu can't help you with this game right now. Don't worry—we're already working on getting it fixed as soon as possible. Thank you so much for giving Lu a try! Issue : Something went wrong while checking game knowledge")
-            completion(false)
+            luLog(.error, "Invalid URL for check-rom endpoint: \(urlString)")
+            showError("Unable to connect to Lu. Please try again later. Technical details: Invalid URL format.")
+            completion(.error(message: nil))
             return
         }
         
@@ -825,23 +876,28 @@ extension PauseViewController {
                     let errorMessage: String
                     switch error.code {
                     case .timedOut:
-                        errorMessage = "Connection timed out. Please check your internet connection and try again."
+                        errorMessage = "Lu is taking longer than usual to respond. This is a connection issue, not a problem with game compatibility. Please try again when your connection is more stable."
+                        luLog(.error,"check-rom error: Request timed out - \(error.localizedDescription)")
                     case .notConnectedToInternet:
-                        errorMessage = "No internet connection. Please check your connection and try again."
+                        errorMessage = "Unable to check if this game is supported because there's no internet connection. This is a network issue, not a problem with game compatibility. Please check your connection and try again."
+                        luLog(.error,"check-rom error: No internet connection - \(error.localizedDescription)")
                     default:
-                        errorMessage = "Unable to connect to Lu. Please try again later."
+                        errorMessage = "Unable to connect to Lu due to a network issue. This doesn't mean your game isn't supported. Please try again when your connection is working properly."
+                        luLog(.error,"check-rom error: Network error (\(error.code)) - \(error.localizedDescription)")
                     }
                     
-                    luLog(.error,"check-rom error: \(errorMessage) - \(error.localizedDescription)")
-                    self.showError("Sorry, but Lu can't help you with this game right now. Don't worry—we're already working on getting it fixed as soon as possible. Thank you so much for giving Lu a try! Issue : \(errorMessage)")
-                    completion(false)
+                    // Store the error message to be displayed after loading alert is dismissed
+                    let finalMessage = "\(errorMessage) Technical details: \(error.localizedDescription)"
+                    
+                    // Pass the error message to the completion handler
+                    completion(.error(message: finalMessage))
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    self.showError("Sorry, but Lu can't help you with this game right now. Don't worry—we're already working on getting it fixed as soon as possible. Thank you so much for giving Lu a try! Issue : Received an invalid response. Please try again.")
-                    luLog(.error,"check-rom error: invalid response \(response)")
-                    completion(false)
+                    let errorMessage = "Unable to connect to Lu due to a network issue. This doesn't mean your game isn't supported. Please try again later. Technical details: Received an invalid response."
+                    luLog(.error,"check-rom error: invalid response \(String(describing: response))")
+                    completion(.error(message: errorMessage))
                     return
                 }
                 
@@ -850,7 +906,7 @@ extension PauseViewController {
                     if let data = data {
                         do {
                             let supportResponse = try JSONDecoder().decode(GameSupportResponse.self, from: data)
-
+                            
                             ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId = supportResponse.game_id
                             
                             // Store the supports_attachments and supports_savestates flags
@@ -862,30 +918,29 @@ extension PauseViewController {
                             // Log successful response
                             luLog(.info, "Response [check-rom]: game_id=\(supportResponse.game_id), supports_attachments=\(supportsAttachments), supports_savestates=\(supportsSavestates), status=\(httpResponse.statusCode)")
                             
-                            completion(true)
+                            completion(.supported)
                         } catch {
                             luLog(.error, "check-rom decode error: \(error.localizedDescription)")
-                            self.showError("Failed to process game support information")
-                            completion(false)
+                            let errorMessage = "Failed to process game support information. Technical details: \(error.localizedDescription)"
+                            completion(.error(message: errorMessage))
                         }
                     }
                 case 404:
                     luLog(.info, "Response [check-rom]: Game not available yet, status=\(httpResponse.statusCode)")
-                    self.showUnsupportedGameMessage()
-                    completion(false)
+                    // Don't call showUnsupportedGameMessage() here anymore, as it will be called by the completion handler
+                    completion(.unsupported)
                 case 500...599:
                     luLog(.error, "check-rom server error: Status \(httpResponse.statusCode)")
-                    self.showError("Lu is temporarily unavailable. Please try again later.")
-                    completion(false)
+                    let errorMessage = "Lu is temporarily unavailable. Please try again later. Technical details: Server returned status \(httpResponse.statusCode)."
+                    completion(.error(message: errorMessage))
                     
                 default:
                     luLog(.error, "check-rom unexpected error, status: \(httpResponse.statusCode)")
-                    self.showError("Something unexpected happened. Please try again.")
-                    completion(false)
+                    let errorMessage = "Something unexpected happened. Please try again. Technical details: Server returned status \(httpResponse.statusCode)."
+                    completion(.error(message: errorMessage))
                 }
             }
         }
-        
         task.resume()
     }
 }
