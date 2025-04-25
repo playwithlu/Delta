@@ -182,6 +182,65 @@ extension GameViewController {
         // Add pan gesture recognizer for dragging
         let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handleLuButtonPan(_:)))
         button.addGestureRecognizer(panGesture)
+        
+        // Add orientation change observer
+        registerForOrientationChanges()
+    }
+    
+    func registerForOrientationChanges() {
+        // First remove any existing observer to avoid duplicates
+        unregisterFromOrientationChanges()
+        
+        // Add orientation change observer
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(orientationDidChange),
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
+    }
+    
+    func unregisterFromOrientationChanges() {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
+    }
+    
+    @objc func orientationDidChange() {
+        // Give the view time to update its layout for the new orientation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self, let button = self.luButton else { return }
+            
+            // Only adjust if the button is using frame-based layout (has been dragged)
+            if button.translatesAutoresizingMaskIntoConstraints {
+                self.keepButtonWithinSafeBounds(button)
+            }
+        }
+    }
+    
+    private func keepButtonWithinSafeBounds(_ button: UIButton) {
+        // Get button dimensions
+        let halfButtonWidth = button.bounds.width / 2
+        let halfButtonHeight = button.bounds.height / 2
+        let safeAreaInsets = view.safeAreaInsets
+        
+        // Get current position
+        var newCenter = button.center
+        
+        // Constrain x position
+        newCenter.x = max(halfButtonWidth + safeAreaInsets.left, newCenter.x)
+        newCenter.x = min(view.bounds.width - halfButtonWidth - safeAreaInsets.right, newCenter.x)
+        
+        // Constrain y position
+        newCenter.y = max(halfButtonHeight + safeAreaInsets.top, newCenter.y)
+        newCenter.y = min(view.bounds.height - halfButtonHeight - safeAreaInsets.bottom, newCenter.y)
+        
+        // Update button position with animation
+        UIView.animate(withDuration: 0.3) {
+            button.center = newCenter
+        }
     }
     
     @objc func handleLuButtonPan(_ gesture: UIPanGestureRecognizer) {
@@ -223,7 +282,20 @@ extension GameViewController {
         button.center = newCenter
         
         // Reset translation to avoid accumulation
+        // Reset translation to avoid accumulation
         gesture.setTranslation(.zero, in: view)
+    }
+    
+    // Called by the GameViewController's viewWillDisappear
+    func viewWillDisappearHandler(animated: Bool) {
+        // Clean up when view disappears
+        unregisterFromOrientationChanges()
+    }
+    
+    // Called by the GameViewController's viewDidAppear
+    func viewDidAppearHandler(animated: Bool) {
+        // Re-register when view appears
+        registerForOrientationChanges()
     }
     
     @objc private func luButtonTapped() {
@@ -484,7 +556,46 @@ extension GameViewController {
             attachments: attachments
         )
     }
+    
+    // Method swizzling to hook into the view controller lifecycle methods
+    static func swizzleViewControllerMethods() {
+        // This should be called once when the app starts, such as in GameViewController's initialize() method
+        
+        if self == GameViewController.self {
+            let originalViewDidAppear = class_getInstanceMethod(self, #selector(UIViewController.viewDidAppear(_:)))
+            let swizzledViewDidAppear = class_getInstanceMethod(self, #selector(GameViewController.swizzled_viewDidAppear(_:)))
+            
+            let originalViewWillDisappear = class_getInstanceMethod(self, #selector(UIViewController.viewWillDisappear(_:)))
+            let swizzledViewWillDisappear = class_getInstanceMethod(self, #selector(GameViewController.swizzled_viewWillDisappear(_:)))
+            
+            if let originalMethod = originalViewDidAppear, let swizzledMethod = swizzledViewDidAppear {
+                method_exchangeImplementations(originalMethod, swizzledMethod)
+            }
+            
+            if let originalMethod = originalViewWillDisappear, let swizzledMethod = swizzledViewWillDisappear {
+                method_exchangeImplementations(originalMethod, swizzledMethod)
+            }
+        }
+    }
+    
+    // Swizzled view controller methods
+    @objc func swizzled_viewDidAppear(_ animated: Bool) {
+        // Call the original implementation
+        self.swizzled_viewDidAppear(animated)
+        
+        // Call our custom handler
+        self.viewDidAppearHandler(animated: animated)
+    }
+    
+    @objc func swizzled_viewWillDisappear(_ animated: Bool) {
+        // Call the original implementation
+        self.swizzled_viewWillDisappear(animated)
+        
+        // Call our custom handler
+        self.viewWillDisappearHandler(animated: animated)
+    }
 }
+
 // Keys for GamesViewController associated objects
 private var gamesViewLuButtonKey: UInt8 = 0
 private var gamesViewLuButtonConstraintsKey: UInt8 = 0
@@ -550,6 +661,65 @@ extension GamesViewController {
         // Add pan gesture recognizer for dragging
         let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handleLuButtonPan(_:)))
         button.addGestureRecognizer(panGesture)
+        
+        // Add orientation change observer
+        registerForOrientationChanges()
+    }
+    
+    func registerForOrientationChanges() {
+        // First remove any existing observer to avoid duplicates
+        unregisterFromOrientationChanges()
+        
+        // Add orientation change observer
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(orientationDidChange),
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
+    }
+    
+    func unregisterFromOrientationChanges() {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
+    }
+    
+    @objc func orientationDidChange() {
+        // Give the view time to update its layout for the new orientation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self, let button = self.luButton else { return }
+            
+            // Only adjust if the button is using frame-based layout (has been dragged)
+            if button.translatesAutoresizingMaskIntoConstraints {
+                self.keepButtonWithinSafeBounds(button)
+            }
+        }
+    }
+    
+    private func keepButtonWithinSafeBounds(_ button: UIButton) {
+        // Get button dimensions
+        let halfButtonWidth = button.bounds.width / 2
+        let halfButtonHeight = button.bounds.height / 2
+        let safeAreaInsets = view.safeAreaInsets
+        
+        // Get current position
+        var newCenter = button.center
+        
+        // Constrain x position
+        newCenter.x = max(halfButtonWidth + safeAreaInsets.left, newCenter.x)
+        newCenter.x = min(view.bounds.width - halfButtonWidth - safeAreaInsets.right, newCenter.x)
+        
+        // Constrain y position
+        newCenter.y = max(halfButtonHeight + safeAreaInsets.top, newCenter.y)
+        newCenter.y = min(view.bounds.height - halfButtonHeight - safeAreaInsets.bottom, newCenter.y)
+        
+        // Update button position with animation
+        UIView.animate(withDuration: 0.3) {
+            button.center = newCenter
+        }
     }
     
     @objc func handleLuButtonPan(_ gesture: UIPanGestureRecognizer) {
@@ -594,8 +764,19 @@ extension GamesViewController {
         gesture.setTranslation(.zero, in: view)
     }
     
+    // Called by the GamesViewController's viewWillDisappear
+    func viewWillDisappearHandler(animated: Bool) {
+        // Clean up when view disappears
+        unregisterFromOrientationChanges()
+    }
+    
+    // Called by the GamesViewController's viewDidAppear
+    func viewDidAppearHandler(animated: Bool) {
+        // Re-register when view appears
+        registerForOrientationChanges()
+    }
+    
     @objc func luButtonTapped() {
-        // Use hardcoded game ID for GamesViewController
         let hardcodedGameId = "0097b2c8-ef65-49e6-9f78-3f896c73db2e"
         
         // Set the active game ID directly
@@ -610,5 +791,43 @@ extension GamesViewController {
         let chatViewController = LuChatViewController(game: dummyGame, emulatorCore: nil)
         let navigationController = UINavigationController(rootViewController: chatViewController)
         present(navigationController, animated: true)
+    }
+    
+    // Method swizzling to hook into the view controller lifecycle methods
+    static func swizzleViewControllerMethods() {
+        // This should be called once when the app starts, such as in GamesViewController's initialize() method
+        
+        if self == GamesViewController.self {
+            let originalViewDidAppear = class_getInstanceMethod(self, #selector(UIViewController.viewDidAppear(_:)))
+            let swizzledViewDidAppear = class_getInstanceMethod(self, #selector(GamesViewController.swizzled_viewDidAppear(_:)))
+            
+            let originalViewWillDisappear = class_getInstanceMethod(self, #selector(UIViewController.viewWillDisappear(_:)))
+            let swizzledViewWillDisappear = class_getInstanceMethod(self, #selector(GamesViewController.swizzled_viewWillDisappear(_:)))
+            
+            if let originalMethod = originalViewDidAppear, let swizzledMethod = swizzledViewDidAppear {
+                method_exchangeImplementations(originalMethod, swizzledMethod)
+            }
+            
+            if let originalMethod = originalViewWillDisappear, let swizzledMethod = swizzledViewWillDisappear {
+                method_exchangeImplementations(originalMethod, swizzledMethod)
+            }
+        }
+    }
+    
+    // Swizzled view controller methods
+    @objc func swizzled_viewDidAppear(_ animated: Bool) {
+        // Call the original implementation
+        self.swizzled_viewDidAppear(animated)
+        
+        // Call our custom handler
+        self.viewDidAppearHandler(animated: animated)
+    }
+    
+    @objc func swizzled_viewWillDisappear(_ animated: Bool) {
+        // Call the original implementation
+        self.swizzled_viewWillDisappear(animated)
+        
+        // Call our custom handler
+        self.viewWillDisappearHandler(animated: animated)
     }
 }
