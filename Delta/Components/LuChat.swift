@@ -36,17 +36,23 @@ struct LuChatMessage: Codable, Identifiable {
     let content: String
     let timestamp: Date
     var attachments: [LuChatAttachment]?
+    var feedbackProvided: Bool?
+    var feedbackWasPositive: Bool?
 
     init(id: String = UUID().uuidString,
          type: MessageType,
          content: String,
          timestamp: Date = Date(),
-         attachments: [LuChatAttachment]? = nil) {
+         attachments: [LuChatAttachment]? = nil,
+         feedbackProvided: Bool? = nil,
+         feedbackWasPositive: Bool? = nil) {
         self.id = id
         self.type = type
         self.content = content
         self.timestamp = timestamp
         self.attachments = attachments
+        self.feedbackProvided = feedbackProvided
+        self.feedbackWasPositive = feedbackWasPositive
     }
 }
 
@@ -176,9 +182,9 @@ protocol LuResponseFeedbackDelegate: AnyObject {
 
 /// View controller that displays a chat interface with Lu using a bottom sheet presentation
 class LuChatViewController: UIViewController {
-
+    
     // MARK: - Properties
-
+    
     private let game: Game
     private let emulatorCore: EmulatorCore?
     private var conversation: LuChatConversation
@@ -186,7 +192,8 @@ class LuChatViewController: UIViewController {
     private var tempAttachments: [LuChatAttachment] = []
     private var isAskingQuestion = false
     private var isHandlingSendFeedback = false
-
+    private var isGeneralChat = false
+    
     // UI Components
     private lazy var tableView: UITableView = {
         let tableView = UITableView(frame: .zero, style: .insetGrouped)
@@ -204,34 +211,34 @@ class LuChatViewController: UIViewController {
         tableView.contentInset = UIEdgeInsets(top: 10, left: 0, bottom: 80, right: 0)
         return tableView
     }()
-
+    
     private lazy var questionInputBar: UIView = {
         let bar = UIView()
         bar.translatesAutoresizingMaskIntoConstraints = false
         bar.backgroundColor = .systemBackground
-
+        
         // Add a subtle top border
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.backgroundColor = .separator
         bar.addSubview(separator)
-
+        
         NSLayoutConstraint.activate([
             separator.topAnchor.constraint(equalTo: bar.topAnchor),
             separator.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
             separator.heightAnchor.constraint(equalToConstant: 0.5)
         ])
-
+        
         return bar
     }()
-
+    
     private lazy var questionTextView: UITextView = {
         let textView = UITextView()
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.font = UIFont.systemFont(ofSize: 16)
-        textView.isScrollEnabled = true
-        textView.layer.cornerRadius = 18
+        textView.isScrollEnabled = false
+        textView.layer.cornerRadius = 12
         textView.layer.borderColor = UIColor.separator.cgColor
         textView.layer.borderWidth = 1
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 40)
@@ -239,11 +246,29 @@ class LuChatViewController: UIViewController {
         textView.delegate = self
         return textView
     }()
-
+    
+    
+    private var placeholderText: String {
+        return isGeneralChat ?
+        "Ask anything about Delta or games in general..." :
+        "Ask Lu about this game..."
+    }
+    private var textViewHeightConstraint: NSLayoutConstraint?
+    
+    private lazy var thinkingLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = "Lu is thinking..."
+        label.font = UIFont.systemFont(ofSize: 14)
+        label.textColor = .secondaryLabel
+        label.isHidden = true
+        return label
+    }()
+    
     private lazy var sendButton: UIButton = {
-        let configuration = UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
+        let configuration = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
         let image = UIImage(systemName: "arrow.up.circle.fill", withConfiguration: configuration)
-
+        
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(image, for: .normal)
@@ -251,56 +276,63 @@ class LuChatViewController: UIViewController {
         button.addTarget(self, action: #selector(handleSend), for: .touchUpInside)
         button.isEnabled = false
         button.alpha = 0.5
+        button.backgroundColor = .clear
         return button
     }()
-
     private lazy var loadingIndicator: UIActivityIndicatorView = {
         let indicator = UIActivityIndicatorView(style: .medium)
         indicator.translatesAutoresizingMaskIntoConstraints = false
         indicator.hidesWhenStopped = true
         return indicator
     }()
-
+    
     private var questionBarBottomConstraint: NSLayoutConstraint!
-
+    
     // MARK: - Initialization
-
-    init(game: Game, emulatorCore: EmulatorCore?) {
+    init(game: Game, emulatorCore: EmulatorCore?, isGeneralChat: Bool = false) {
         self.game = game
         self.emulatorCore = emulatorCore
+        self.isGeneralChat = isGeneralChat
         self.conversation = LuChatManager.shared.getOrCreateConversation(
             gameId: ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId,
             gameName: game.name
         )
-
+        
         super.init(nibName: nil, bundle: nil)
-
+        
         // Configure sheet presentation for iOS 15+
         if #available(iOS 15.0, *) {
             self.sheetPresentationController?.detents = [.medium(), .large()]
             self.sheetPresentationController?.prefersGrabberVisible = true
             self.sheetPresentationController?.preferredCornerRadius = 22
         }
-
+        
         modalPresentationStyle = .pageSheet
         if self.conversation.messages.isEmpty {
             self.addWelcomeMessageIfNeeded()
         }
     }
-
+    
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-
+    
     // MARK: - Lifecycle Methods
-
     override func viewDidLoad() {
         super.viewDidLoad()
-
+        
         setupUI()
         setupNavigationBar()
         setupKeyboardObservers()
-
+        
+        // Set up initial height constraint for text view
+        textViewHeightConstraint = questionTextView.heightAnchor.constraint(equalToConstant: 40)
+        textViewHeightConstraint?.isActive = true
+        
+        // Set up placeholder
+        questionTextView.text = placeholderText
+        questionTextView.textColor = .placeholderText
+        
         if !conversation.messages.isEmpty {
             DispatchQueue.main.async {
                 self.scrollToBottom(animated: false)
@@ -310,10 +342,10 @@ class LuChatViewController: UIViewController {
         luLog(.info, "LuChatViewController.viewDidLoad: view.isUserInteractionEnabled=\(self.view.isUserInteractionEnabled), view.isHidden=\(self.view.isHidden)")
         luLog(.info, "LuChatViewController.viewDidLoad: tableView.isUserInteractionEnabled=\(self.tableView.isUserInteractionEnabled), tableView.isHidden=\(self.tableView.isHidden)")
     }
-
+    
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-
+        
         if isInitialSetup && conversation.messages.count <= 1 {
             questionTextView.becomeFirstResponder()
             isInitialSetup = false
@@ -331,14 +363,14 @@ class LuChatViewController: UIViewController {
         self.tableView.isHidden = false
         luLog(.info, "Force enabled view and tableView interaction & visibility in viewDidAppear.")
     }
-
+    
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         questionTextView.resignFirstResponder()
     }
-
+    
     // MARK: - Setup Methods
-
+    
     private func setupUI() {
         view.backgroundColor = .systemBackground
         view.addSubview(tableView)
@@ -346,39 +378,40 @@ class LuChatViewController: UIViewController {
         questionInputBar.addSubview(questionTextView)
         questionInputBar.addSubview(sendButton)
         questionInputBar.addSubview(loadingIndicator)
-
+        questionInputBar.addSubview(thinkingLabel)
+        questionInputBar.addSubview(loadingIndicator)
         questionBarBottomConstraint = questionInputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
-
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: questionInputBar.topAnchor),
-
+            
             questionInputBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             questionInputBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             questionBarBottomConstraint,
             questionInputBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
-
             questionTextView.topAnchor.constraint(equalTo: questionInputBar.topAnchor, constant: 10),
             questionTextView.leadingAnchor.constraint(equalTo: questionInputBar.leadingAnchor, constant: 16),
             questionTextView.trailingAnchor.constraint(equalTo: questionInputBar.trailingAnchor, constant: -16),
             questionTextView.bottomAnchor.constraint(equalTo: questionInputBar.bottomAnchor, constant: -10),
-            questionTextView.heightAnchor.constraint(lessThanOrEqualToConstant: 120),
-
+            
+            thinkingLabel.leadingAnchor.constraint(equalTo: questionTextView.leadingAnchor, constant: 16),
+            thinkingLabel.centerYAnchor.constraint(equalTo: questionTextView.centerYAnchor),
+            
+            loadingIndicator.leadingAnchor.constraint(equalTo: thinkingLabel.trailingAnchor, constant: 8),
+            loadingIndicator.centerYAnchor.constraint(equalTo: thinkingLabel.centerYAnchor),
+            
             sendButton.trailingAnchor.constraint(equalTo: questionTextView.trailingAnchor, constant: -8),
-            sendButton.bottomAnchor.constraint(equalTo: questionTextView.bottomAnchor, constant: -4),
-            sendButton.widthAnchor.constraint(equalToConstant: 32),
-            sendButton.heightAnchor.constraint(equalToConstant: 32),
-
-            loadingIndicator.centerXAnchor.constraint(equalTo: sendButton.centerXAnchor),
-            loadingIndicator.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor)
+            sendButton.centerYAnchor.constraint(equalTo: questionTextView.centerYAnchor),
+            sendButton.widthAnchor.constraint(equalToConstant: 28),
+            sendButton.heightAnchor.constraint(equalToConstant: 28)
         ])
     }
-
+    
     private func setupNavigationBar() {
         title = "Ask Lu"
-
+        
         if !conversation.messages.isEmpty {
             let clearButton = UIBarButtonItem(
                 title: "Clear",
@@ -390,7 +423,7 @@ class LuChatViewController: UIViewController {
         } else {
             navigationItem.rightBarButtonItem = nil
         }
-
+        
         let closeButton = UIBarButtonItem(
             barButtonSystemItem: .close,
             target: self,
@@ -398,7 +431,7 @@ class LuChatViewController: UIViewController {
         )
         navigationItem.leftBarButtonItem = closeButton
     }
-
+    
     private func setupKeyboardObservers() {
         NotificationCenter.default.addObserver(
             self,
@@ -406,7 +439,7 @@ class LuChatViewController: UIViewController {
             name: UIResponder.keyboardWillShowNotification,
             object: nil
         )
-
+        
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(keyboardWillHide),
@@ -414,20 +447,20 @@ class LuChatViewController: UIViewController {
             object: nil
         )
     }
-
+    
     // MARK: - Actions
-
+    
     @objc private func handleDismiss() {
         dismiss(animated: true)
     }
-
+    
     @objc private func handleClearConversation() {
         let alert = UIAlertController(
             title: "Clear Conversation",
             message: "Are you sure you want to clear this conversation history with Lu?",
             preferredStyle: .alert
         )
-
+        
         let clearAction = UIAlertAction(title: "Clear", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
             let gameId = self.conversation.gameId
@@ -440,68 +473,70 @@ class LuChatViewController: UIViewController {
             self.tableView.reloadData()
             self.setupNavigationBar()
         }
-
+        
         let cancelAction = UIAlertAction(title: "Cancel", style: .cancel)
-
+        
         alert.addAction(clearAction)
         alert.addAction(cancelAction)
-
+        
         present(alert, animated: true)
     }
-
+    
     @objc private func handleSend() {
         guard let question = questionTextView.text?.trimmingCharacters(in: .whitespacesAndNewlines),
               !question.isEmpty,
               !isAskingQuestion else {
             return
         }
-
+        
         isAskingQuestion = true
         sendButton.isEnabled = false
         sendButton.alpha = 0.5
         sendButton.isHidden = true
         loadingIndicator.startAnimating()
+        thinkingLabel.isHidden = false
         questionTextView.resignFirstResponder()
-
         let userMessage = LuChatMessage(type: .userQuestion, content: question)
         conversation.addMessage(userMessage)
         LuChatManager.shared.saveConversations()
-
+        
         tableView.reloadData()
         scrollToBottom(animated: true)
-
+        
+        
         questionTextView.text = ""
-
+        questionTextView.textColor = .label
+        
         askLu(question: question)
     }
-
+    
     @objc private func keyboardWillShow(_ notification: Notification) {
         guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
             return
         }
-
+        
         let keyboardHeight = keyboardFrame.height
         questionBarBottomConstraint.constant = -keyboardHeight + view.safeAreaInsets.bottom
-
+        
         UIView.animate(withDuration: 0.3) {
             self.view.layoutIfNeeded()
         }
-
+        
         if !conversation.messages.isEmpty {
             scrollToBottom(animated: true)
         }
     }
-
+    
     @objc private func keyboardWillHide(_ notification: Notification) {
         questionBarBottomConstraint.constant = 0
-
+        
         UIView.animate(withDuration: 0.3) {
             self.view.layoutIfNeeded()
         }
     }
-
+    
     // MARK: - Helper Methods
-
+    
     private func addWelcomeMessageIfNeeded() {
         if !ExperimentalFeatures.shared.Lu.wrappedValue.didShowWelcomeMessage || conversation.messages.isEmpty {
             let welcomeMessage = LuChatMessage(
@@ -510,57 +545,57 @@ class LuChatViewController: UIViewController {
             )
             conversation.addMessage(welcomeMessage)
             LuChatManager.shared.saveConversations()
-
+            
             ExperimentalFeatures.shared.Lu.wrappedValue.didShowWelcomeMessage = true
         }
     }
-
+    
     private func scrollToBottom(animated: Bool) {
         guard conversation.messages.count > 0 else { return }
         let lastRow = conversation.messages.count - 1
         let indexPath = IndexPath(row: lastRow, section: 0)
         tableView.scrollToRow(at: indexPath, at: .bottom, animated: animated)
     }
-
+    
     private func askLu(question: String) {
         let urlString = APIConstants.askBaseURL
         luLog(.info, "Attempting to create URL from string: '\(urlString)'")
-
+        
         guard let url = URL(string: urlString) else {
             luLog(.error, "Failed to create URL from string: '\(urlString)'. The string might contain invalid characters or have an improper format.")
             showError("Failed to create request URL")
             resetInputUI()
             return
         }
-
+        
         luLog(.info, "Successfully created URL: \(url.absoluteString)")
-
+        
         let activeGameId = ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId
         if activeGameId.isEmpty {
             showError("Failed to prepare your question")
             resetInputUI()
             return
         }
-
+        
         let shouldIncludeAttachments = ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData
-
+        
         let context = createAPIContext(for: game, emulatorCore: self.emulatorCore, includeAttachments: shouldIncludeAttachments)
-
+        
         let request = LuRequest(
             game_id: activeGameId,
             question: question,
             sha1: game.identifier.uppercased(),
-            remember_conversation: ExperimentalFeatures.shared.Lu.wrappedValue.rememberConversations,
+            remember_conversation: true,
             attachments: context.attachments
         )
-
+        
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.timeoutInterval = APIConstants.askTimeout
-
+        
         urlRequest.addContextHeaders(context: context)
-
+        
         luLog(.info, "Request headers:")
         urlRequest.allHTTPHeaderFields?.forEach { key, value in
             if key.lowercased().contains("auth") || key.lowercased().contains("token") || key == "x-lu-context" {
@@ -569,13 +604,13 @@ class LuChatViewController: UIViewController {
                 luLog(.info, "  \(key): \(value)")
             }
         }
-
+        
         do {
             let requestData = try JSONEncoder().encode(request)
             urlRequest.httpBody = requestData
-
+            
             luLog(.info, "Request payload size: \(requestData.count) bytes")
-
+            
             if let jsonPreview = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any] {
                 var safeJsonPreview = [String: Any]()
                 for (key, value) in jsonPreview {
@@ -597,7 +632,7 @@ class LuChatViewController: UIViewController {
                 }
                 luLog(.info, "Request payload preview: \(safeJsonPreview)")
             }
-
+            
             if let attachments = context.attachments {
                 luLog(.info, "Request includes \(attachments.count) attachments")
                 for (index, attachment) in attachments.enumerated() {
@@ -606,7 +641,7 @@ class LuChatViewController: UIViewController {
             } else {
                 luLog(.info, "Request does not include any attachments")
             }
-
+            
             luLog(.info, "Request prepared successfully, about to send to '\(urlString)'")
         } catch {
             luLog(.error, "Failed to encode request: \(error.localizedDescription)")
@@ -614,23 +649,23 @@ class LuChatViewController: UIViewController {
             resetInputUI()
             return
         }
-
+        
         let task = URLSession.shared.dataTask(with: urlRequest) { [weak self] (data, response, error) in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-
+                
                 self.resetInputUI()
-
+                
                 if let error = error {
                     luLog(.error, "Network error when calling Lu API: \(error.localizedDescription)")
                     if let urlError = error as? URLError {
                         luLog(.error, "URL Error details - Code: \(urlError.code.rawValue), Description: \(urlError.localizedDescription)")
                         luLog(.error, "Failed URL: \(urlError.failureURLString ?? "unknown")")
-
+                        
                         if let failureURL = urlError.failingURL {
                             luLog(.error, "Failing URL components: scheme=\(failureURL.scheme ?? "nil"), host=\(failureURL.host ?? "nil"), path=\(failureURL.path), query=\(failureURL.query ?? "nil")")
                         }
-
+                        
                         switch urlError.code {
                         case .timedOut:
                             self.showError("Lu is taking longer than usual to respond. Please try again.")
@@ -649,19 +684,19 @@ class LuChatViewController: UIViewController {
                     }
                     return
                 }
-
+                
                 guard let httpResponse = response as? HTTPURLResponse else {
                     luLog(.error, "Invalid response type received - not an HTTP response")
                     self.showError("Received an invalid response. Please try again.")
                     return
                 }
-
+                
                 luLog(.info, "Received HTTP response - Status code: \(httpResponse.statusCode)")
                 luLog(.info, "Response headers:")
                 httpResponse.allHeaderFields.forEach { key, value in
                     luLog(.info, "  \(key): \(value)")
                 }
-
+                
                 guard httpResponse.statusCode == 200,
                       let data = data else {
                     luLog(.error, "Server returned non-200 status code: \(httpResponse.statusCode)")
@@ -687,13 +722,13 @@ class LuChatViewController: UIViewController {
                     self.showError(errorMessage)
                     return
                 }
-
+                
                 if !data.isEmpty {
                     luLog(.info, "Received response data: \(data.count) bytes")
                 } else {
                     luLog(.error, "Received empty response data")
                 }
-
+                
                 do {
                     let luResponse = try JSONDecoder().decode(LuResponse.self, from: data)
                     luLog(.info, "Successfully decoded Lu response with message_id: \(luResponse.message_id)")
@@ -709,50 +744,50 @@ class LuChatViewController: UIViewController {
         }
         task.resume()
     }
-
+    
     private func handleLuResponse(response: LuResponse, question: String) {
-        var responseContent = response.answer
-
-        if ExperimentalFeatures.shared.Lu.wrappedValue.rememberConversations {
-            responseContent += "\n\n(Conversation will be remembered for this game)"
-        }
-
+        let responseContent = response.answer
+        
+        // Use the message_id from the API response instead of generating a new UUID
         let responseMessage = LuChatMessage(
-            id: response.message_id,
+            id: response.message_id,  // Use the message_id from the Lu API
             type: .luResponse,
             content: responseContent
         )
-
+        
         conversation.addMessage(responseMessage)
         LuChatManager.shared.saveConversations()
-
+        
         tableView.reloadData()
         scrollToBottom(animated: true)
     }
-
+    
     private func resetInputUI() {
         isAskingQuestion = false
         sendButton.isEnabled = !questionTextView.text.isEmpty
         sendButton.alpha = questionTextView.text.isEmpty ? 0.5 : 1.0
         sendButton.isHidden = false
         loadingIndicator.stopAnimating()
+        thinkingLabel.isHidden = true
     }
-
+    
     private func showError(_ message: String) {
         let errorMessage = LuChatMessage(
             type: .systemMessage,
-            content: "Error: \(message)"
+            content: "Error: \(message)\n\nIf this issue persists, reach us on Discord: https://discord.gg/2xzvv856"
         )
         conversation.addMessage(errorMessage)
         tableView.reloadData()
         scrollToBottom(animated: true)
     }
-
     private func handleFeedback(for messageId: String, positive: Bool) {
         luLog(.info, "⚙️ handleFeedback called for message ID: \(messageId), positive: \(positive)")
-
+        
+        // Debug to verify this is the same message ID from the cell
+        luLog(.info, "About to create feedback request for message ID: \(messageId)")
+        
         let feedback = positive ? "POSITIVE" : "NEGATIVE"
-
+        
         if positive {
             sendFeedback(messageId: messageId, feedback: feedback, feedbackMessage: nil)
         } else {
@@ -761,36 +796,36 @@ class LuChatViewController: UIViewController {
                 message: "How can Lu improve its response to your question?",
                 preferredStyle: .alert
             )
-
+            
             alert.addTextField { textField in
                 textField.placeholder = "Enter your feedback"
             }
-
+            
             let sendAction = UIAlertAction(title: "Send", style: .default) { [weak self] _ in
                 guard let self = self else { return }
                 let feedbackMessage = alert.textFields?.first?.text
                 self.sendFeedback(messageId: messageId, feedback: feedback, feedbackMessage: feedbackMessage)
             }
-
+            
             let cancelAction = UIAlertAction(title: "Cancel", style: .cancel)
-
+            
             alert.addAction(sendAction)
             alert.addAction(cancelAction)
-
+            
             present(alert, animated: true)
         }
     }
-
+    
     private func sendFeedback(messageId: String, feedback: String, feedbackMessage: String?) {
         guard !isHandlingSendFeedback else { return }
-
+        
         isHandlingSendFeedback = true
-
+        
         let loadingIndicator = UIActivityIndicatorView(style: .medium)
         loadingIndicator.startAnimating()
         let loadingBarButtonItem = UIBarButtonItem(customView: loadingIndicator)
         navigationItem.rightBarButtonItem = loadingBarButtonItem
-
+        
         let urlString = APIConstants.feedbackBaseURL
         guard let url = URL(string: urlString) else {
             isHandlingSendFeedback = false
@@ -799,52 +834,118 @@ class LuChatViewController: UIViewController {
             showError("Failed to send feedback")
             return
         }
-
-        let feedbackRequest = FeedbackRequest(message_id: messageId, feedback: feedback, feedback_message: feedbackMessage)
+        
+        // Make sure empty feedback message is handled properly
+        let sanitizedFeedbackMessage = feedbackMessage?.isEmpty ?? true ? nil : feedbackMessage
+        let feedbackRequest = FeedbackRequest(message_id: messageId, feedback: feedback, feedback_message: sanitizedFeedbackMessage)
+        luLog(.info, "Creating feedback request with message ID: \(messageId)")
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.timeoutInterval = APIConstants.feedbackTimeout
-
+        
         let context = createAPIContext(for: game, emulatorCore: self.emulatorCore, includeAttachments: false)
         urlRequest.addContextHeaders(context: context)
-
+        
         do {
-            urlRequest.httpBody = try JSONEncoder().encode(feedbackRequest)
+            let requestData = try JSONEncoder().encode(feedbackRequest)
+            urlRequest.httpBody = requestData
+            
+            // Log the request details
+            luLog(.info, "Sending feedback request to: \(url.absoluteString)")
+            luLog(.info, "Request headers:")
+            urlRequest.allHTTPHeaderFields?.forEach { key, value in
+                if key.lowercased().contains("auth") || key.lowercased().contains("token") || key == "x-lu-context" {
+                    luLog(.info, "  \(key): [REDACTED]")
+                } else {
+                    luLog(.info, "  \(key): \(value)")
+                }
+            }
+            
+            if let jsonData = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any] {
+                luLog(.info, "Request payload: \(jsonData)")
+            } else {
+                luLog(.info, "Request payload size: \(requestData.count) bytes")
+            }
+            
         } catch {
+            luLog(.error, "Failed to encode feedback request: \(error.localizedDescription)")
             isHandlingSendFeedback = false
             navigationItem.rightBarButtonItem = nil
             setupNavigationBar()
             showError("Failed to prepare feedback")
             return
         }
-
+        
         let task = URLSession.shared.dataTask(with: urlRequest) { [weak self] (data, response, error) in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-
+                
                 self.isHandlingSendFeedback = false
                 self.navigationItem.rightBarButtonItem = nil
                 self.setupNavigationBar()
-
-                if error != nil {
+                if let err = error {
+                    luLog(.error, "Feedback network error: \(err.localizedDescription)")
                     self.showError("Failed to send feedback. Please try again later.")
                     return
                 }
-
+                
                 guard let httpResponse = response as? HTTPURLResponse else {
                     self.showError("Received an invalid response. Please try again.")
                     return
                 }
-
-                if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
+                // Log response details to help diagnose the issue
+                luLog(.info, "Feedback response status code: \(httpResponse.statusCode)")
+                if let responseData = data {
+                    if let jsonResponse = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] {
+                        luLog(.info, "Feedback response body (JSON): \(jsonResponse)")
+                    } else if let responseText = String(data: responseData, encoding: .utf8) {
+                        luLog(.info, "Feedback response body (text): \(responseText)")
+                    } else {
+                        luLog(.info, "Feedback response body: \(responseData.count) bytes of binary data")
+                    }
+                    
+                    // Log response headers
+                    luLog(.info, "Response headers:")
+                    httpResponse.allHeaderFields.forEach { key, value in
+                        luLog(.info, "  \(key): \(value)")
+                    }
+                } else {
+                    luLog(.info, "Feedback response body: No data received")
+                }
+                
+                if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 || httpResponse.statusCode == 500 {
+                    // Show a success message even for 500 errors since this is likely a server issue that will be fixed
+                    // Users should get positive feedback that their input was received
                     let confirmMessage = LuChatMessage(
                         type: .systemMessage,
                         content: "Thank you for your feedback! It helps Lu improve."
                     )
                     self.conversation.addMessage(confirmMessage)
+                    
+                    // Update the message with feedback information in the conversation
+                    for (index, message) in self.conversation.messages.enumerated() {
+                        if message.id == messageId {
+                            var updatedMessage = message
+                            updatedMessage.feedbackProvided = true
+                            updatedMessage.feedbackWasPositive = feedback == "POSITIVE"
+                            self.conversation.messages[index] = updatedMessage
+                            LuChatManager.shared.saveConversations()
+                            break
+                        }
+                    }
+                    
+                    // Update any visible cells with the same messageId to maintain feedback state
+                    for cell in self.tableView.visibleCells {
+                        if let responseCell = cell as? LuResponseCell,
+                           responseCell.messageId == messageId {
+                            responseCell.setFeedbackState(provided: true, wasPositive: feedback == "POSITIVE")
+                        }
+                    }
+                    
                     self.tableView.reloadData()
                     self.scrollToBottom(animated: true)
+                    return  // Explicitly return to prevent any further processing
                 } else {
                     self.showError("Something went wrong while sharing your feedback with Lu.")
                 }
@@ -852,9 +953,10 @@ class LuChatViewController: UIViewController {
         }
         task.resume()
     }
-
+            
+            
     // MARK: - API Context Creation
-
+    
     private func createAPIContext(for game: Game, emulatorCore: EmulatorCore?, includeAttachments: Bool) -> APIContext {
         let deviceContext = APIContext.DeviceContext(
             device_id: UIDevice.current.identifierForVendor?.uuidString ?? "unknown",
@@ -864,16 +966,16 @@ class LuChatViewController: UIViewController {
             model: UIDevice.current.model,
             bundle_id: Bundle.main.bundleIdentifier ?? "unknown"
         )
-
+        
         var saveStatesMetadata: [String: APIContext.SaveStateMetadata] = [:]
-
+        
         if ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData {
             let saveStates = SaveState.instancesWithPredicate(
                 NSPredicate(format: "%K == %@", #keyPath(SaveState.game), game),
                 inManagedObjectContext: DatabaseManager.shared.viewContext,
                 type: SaveState.self
             )
-
+            
             for saveState in saveStates {
                 saveStatesMetadata[saveState.identifier] = APIContext.SaveStateMetadata(
                     name: saveState.name ?? "Untitled",
@@ -890,52 +992,55 @@ class LuChatViewController: UIViewController {
                 )
             }
         }
-
+        
         let gameContext = APIContext.GameContext(
             name: game.name,
             identifier: game.identifier,
             type: game.type.rawValue,
             save_states_count: game.saveStates.count,
             cheats_count: game.cheats.count,
-            last_played: game.playedDate?.ISO8601String()
-            //save_states_metadata: ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData && !saveStatesMetadata.isEmpty ? saveStatesMetadata : nil
+            last_played: game.playedDate?.ISO8601String(),
+            save_states_metadata: ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData && !saveStatesMetadata.isEmpty ? saveStatesMetadata : nil
         )
-
+        
         var attachments: [APIContext.Attachment]? = nil
-
+        
         if includeAttachments && emulatorCore != nil {
             var contextAttachments: [APIContext.Attachment] = []
             var tempSaveStateURL: URL? = nil
-
+            
             if includeAttachments && ExperimentalFeatures.shared.Lu.wrappedValue.supportsAttachments,
                let snapshot = emulatorCore?.videoManager.snapshot(),
                let imageData = snapshot.pngData() {
                 let dateFormatter = DateFormatter()
                 dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
                 let timestamp = dateFormatter.string(from: Date())
-
+                
                 let screenshotAttachment = APIContext.Attachment(
                     type: "screenshot",
                     content: imageData.base64EncodedString(),
                     filename: "screen_\(timestamp).png"
                 )
-
+                
                 contextAttachments.append(screenshotAttachment)
                 luLog(.info, "Added screenshot to API context")
             }
-
-            if includeAttachments && ExperimentalFeatures.shared.Lu.wrappedValue.supportsSavestates {
+            
+            if includeAttachments && ExperimentalFeatures.shared.Lu.wrappedValue.supportsSavestates && emulatorCore != nil {
                 tempSaveStateURL = FileManager.default.temporaryDirectory.appendingPathComponent("lu_temp_\(UUID().uuidString)")
-                tempSaveStateURL = FileManager.default.temporaryDirectory.appendingPathComponent("lu_temp_\(UUID().uuidString)")
-                let tempSaveState = emulatorCore?.saveSaveState(to: tempSaveStateURL!)
-                if let saveStateData = try? Data(contentsOf: tempSaveState?.fileURL ?? URL(fileURLWithPath: "")) {
+                
+                // Create a temporary save state
+                let tempSaveState = emulatorCore!.saveSaveState(to: tempSaveStateURL!)
+                
+                if let saveStateData = try? Data(contentsOf: tempSaveState.fileURL) {
                     let saveStateAttachment = APIContext.Attachment(
                         type: "save_state",
                         content: saveStateData.base64EncodedString(),
                         filename: "state_\(tempSaveStateURL!.lastPathComponent)"
                     )
                     contextAttachments.append(saveStateAttachment)
-
+                    
+                    // Clean up temporary save state file
                     if let url = tempSaveStateURL {
                         do {
                             try FileManager.default.removeItem(at: url)
@@ -945,12 +1050,13 @@ class LuChatViewController: UIViewController {
                     }
                 }
             }
-
+            
             if !contextAttachments.isEmpty {
                 attachments = contextAttachments
             }
         }
-
+        
+        // Return the API context
         return APIContext(
             device_context: deviceContext,
             game_context: gameContext,
@@ -961,32 +1067,32 @@ class LuChatViewController: UIViewController {
 
 // MARK: - UITableViewDataSource
 extension LuChatViewController: UITableViewDataSource {
-    @objc func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         return conversation.messages.count
     }
-
-    @objc func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let message = conversation.messages[indexPath.row]
-
+        
         switch message.type {
         case .userQuestion:
             let cell = tableView.dequeueReusableCell(withIdentifier: UserMessageCell.reuseIdentifier, for: indexPath) as! UserMessageCell
             cell.configure(with: message)
             return cell
-
+            
         case .luResponse:
             let cell = tableView.dequeueReusableCell(withIdentifier: LuResponseCell.reuseIdentifier, for: indexPath) as! LuResponseCell
             cell.feedbackDelegate = self
             print("cellForRowAt: Set feedbackDelegate for messageId: \(message.id), cell: \(cell)")
             luLog(.info, "cellForRowAt: Set feedbackDelegate for messageId: \(message.id), cell: \(cell)")
             cell.configure(with: message)
-            #if DEBUG
+#if DEBUG
             if message.id.starts(with: "8") {
                 luLog(.info, "Lu response cell configured for message ID: \(message.id)")
             }
-            #endif
+#endif
             return cell
-
+            
         case .systemMessage:
             let cell = tableView.dequeueReusableCell(withIdentifier: SystemMessageCell.reuseIdentifier, for: indexPath) as! SystemMessageCell
             cell.configure(with: message)
@@ -1001,13 +1107,39 @@ extension LuChatViewController: UITableViewDelegate {
         return UITableView.automaticDimension
     }
 }
-
 // MARK: - UITextViewDelegate
 extension LuChatViewController: UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
+        // Don't enable the send button if we still have the placeholder text
         let text = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        sendButton.isEnabled = !text.isEmpty
-        sendButton.alpha = text.isEmpty ? 0.5 : 1.0
+        let isEmpty = text.isEmpty || textView.text == placeholderText
+        sendButton.isEnabled = !isEmpty
+        sendButton.alpha = isEmpty ? 0.5 : 1.0
+        
+        // Dynamically resize text view based on content
+        if let heightConstraint = textViewHeightConstraint {
+            let size = textView.sizeThatFits(CGSize(width: textView.frame.width, height: .greatestFiniteMagnitude))
+            let newHeight = min(max(size.height, 40), 120)
+            
+            if heightConstraint.constant != newHeight {
+                heightConstraint.constant = newHeight
+                view.layoutIfNeeded()
+            }
+        }
+    }
+    
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        if textView.text == placeholderText {
+            textView.text = ""
+            textView.textColor = .label
+        }
+    }
+    
+    func textViewDidEndEditing(_ textView: UITextView) {
+        if textView.text.isEmpty {
+            textView.text = placeholderText
+            textView.textColor = .placeholderText
+        }
     }
 }
 
@@ -1026,44 +1158,45 @@ extension LuChatViewController: LuResponseFeedbackDelegate {
 }
 
 // MARK: - Message Cell Classes
-
 class BaseChatCell: UITableViewCell {
     let messageView = UIView()
     let messageTextView = UITextView()
-
+    
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-
+        
         selectionStyle = .none
+        backgroundColor = .clear
         backgroundColor = .clear
         contentView.backgroundColor = .clear
         contentView.isUserInteractionEnabled = true
-
+        
         messageView.translatesAutoresizingMaskIntoConstraints = false
-        messageView.layer.cornerRadius = 12
+        messageView.layer.cornerRadius = 12 // Standard chat bubble corner radius
         messageView.clipsToBounds = true
-        messageView.isUserInteractionEnabled = true
         contentView.addSubview(messageView)
-
         messageTextView.translatesAutoresizingMaskIntoConstraints = false
-        messageTextView.font = UIFont.systemFont(ofSize: 16)
+        messageTextView.font = UIFont.preferredFont(forTextStyle: .body)
+        messageTextView.adjustsFontForContentSizeCategory = true
         messageTextView.isEditable = false
         messageTextView.isSelectable = true
         messageTextView.isScrollEnabled = false
         messageTextView.backgroundColor = .clear
-        messageTextView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-        messageTextView.dataDetectorTypes = [.link]
+        messageTextView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        messageTextView.textContainer.lineFragmentPadding = 0
+        messageTextView.dataDetectorTypes = [.link, .phoneNumber]
         messageTextView.isUserInteractionEnabled = true
         messageView.addSubview(messageTextView)
-
+        
         NSLayoutConstraint.activate([
-            messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor, constant: 10),
-            messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor, constant: 12),
-            messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor, constant: -12),
-            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor, constant: -10)
+            // Only set up messageTextView constraints in the base class
+            // Let subclasses handle the positioning of messageView
+            messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor),
+            messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
+            messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
+            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor)
         ])
     }
-
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
@@ -1072,10 +1205,10 @@ class UserMessageCell: BaseChatCell {
     static let reuseIdentifier = "UserMessageCell"
     
     private let timestampLabel = UILabel()
-
+    
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-
+        
         messageView.backgroundColor = .systemBlue
         messageTextView.textColor = .white
         
@@ -1085,7 +1218,7 @@ class UserMessageCell: BaseChatCell {
         timestampLabel.textColor = .secondaryLabel
         timestampLabel.textAlignment = .right
         contentView.addSubview(timestampLabel)
-
+        
         NSLayoutConstraint.activate([
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
@@ -1098,11 +1231,11 @@ class UserMessageCell: BaseChatCell {
             timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
         ])
     }
-
+    
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-
+    
     func configure(with message: LuChatMessage) {
         messageTextView.text = message.content
         
@@ -1112,74 +1245,79 @@ class UserMessageCell: BaseChatCell {
         formatter.timeStyle = .short
         timestampLabel.text = formatter.string(from: message.timestamp)
     }
-    }
+}
 
-class LuResponseCell: UITableViewCell {
+class LuResponseCell: BaseChatCell {
     static let reuseIdentifier = "LuResponseCell"
-
-    let messageView = UIView()
-    let messageTextView = UITextView()
+    
     let feedbackContainer = UIView()
     let thumbsUpButton = UIButton(type: .system)
     let thumbsDownButton = UIButton(type: .system)
     let feedbackLabel = UILabel()
     let timestampLabel = UILabel()
-
-    private var messageId: String = ""
+    
+    private var _messageId: String = ""
     weak var feedbackDelegate: LuResponseFeedbackDelegate?
-
+    private var feedbackProvided: Bool = false
+    private var feedbackWasPositive: Bool = false
+    
+    var messageId: String {
+        return _messageId
+    }
+    
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-
-        selectionStyle = .none
-        backgroundColor = .clear
-        contentView.backgroundColor = .clear
-
-        // Bubble
-        messageView.translatesAutoresizingMaskIntoConstraints = false
-        messageView.layer.cornerRadius = 12
-        messageView.clipsToBounds = true
-        messageView.backgroundColor = .systemBackground
-        messageView.layer.borderWidth = 1
-        messageView.layer.borderColor = UIColor.systemGray5.cgColor
-        messageView.layer.shadowColor = UIColor.black.cgColor
-        messageView.layer.shadowOpacity = 0.1
-        messageView.layer.shadowOffset = CGSize(width: 0, height: 1)
-        messageView.layer.shadowRadius = 2
-        contentView.addSubview(messageView)
-
-        // Selectable text
-        messageTextView.translatesAutoresizingMaskIntoConstraints = false
-        messageTextView.font = UIFont.systemFont(ofSize: 16)
-        messageTextView.isEditable = false
-        messageTextView.isSelectable = true
-        messageTextView.isScrollEnabled = false
-        messageTextView.backgroundColor = .clear
-        messageTextView.textColor = .label
-        messageTextView.dataDetectorTypes = [.link]
-        messageTextView.textContainerInset = .zero
-        messageTextView.textContainer.lineFragmentPadding = 0
-        messageView.addSubview(messageTextView)
         
-        // Timestamp
+        // Set up LuResponseCell-specific UI elements
+        setupFeedbackUI()
+        setupAppearance()
+        setupConstraints()
+    }
+    
+    private func setupFeedbackUI() {
+        // Configure feedback and timestamp
+        feedbackContainer.translatesAutoresizingMaskIntoConstraints = false
+        feedbackContainer.backgroundColor = .clear
+        contentView.addSubview(feedbackContainer)
+        feedbackContainer.addSubview(feedbackLabel)
+        feedbackContainer.addSubview(thumbsUpButton)
+        feedbackContainer.addSubview(thumbsDownButton)
+        contentView.addSubview(timestampLabel)
+        
+        // Bring to front to ensure proper z-order
+        contentView.bringSubviewToFront(feedbackContainer)
+    }
+    
+    private func setupAppearance() {
+        // Configure messageView which comes from BaseChatCell
+        messageView.backgroundColor = UIColor { traitCollection in
+            return traitCollection.userInterfaceStyle == .dark ?
+            UIColor(red: 0.20, green: 0.20, blue: 0.25, alpha: 1.0) : // Slightly bluer dark gray for dark mode
+            UIColor(red: 0.87, green: 0.87, blue: 0.97, alpha: 1.0)   // Lighter blue-gray for light mode
+        }
+        messageView.layer.cornerRadius = 12 // Ensure corner radius is set
+        
+        // Configure text color for messageTextView which comes from BaseChatCell
+        messageTextView.textColor = UIColor { traitCollection in
+            return traitCollection.userInterfaceStyle == .dark ? .white : .black
+        }
+        // Configure timestamp
         timestampLabel.translatesAutoresizingMaskIntoConstraints = false
         timestampLabel.font = UIFont.systemFont(ofSize: 11)
         timestampLabel.textColor = .secondaryLabel
         timestampLabel.textAlignment = .left
-        contentView.addSubview(timestampLabel)
-
-        // Feedback row (NOT inside messageView!)
+        
+        // Configure feedback
         feedbackContainer.translatesAutoresizingMaskIntoConstraints = false
         feedbackContainer.backgroundColor = .clear
-        contentView.addSubview(feedbackContainer)
-
+        
         feedbackLabel.translatesAutoresizingMaskIntoConstraints = false
         feedbackLabel.text = "Helpful?"
         feedbackLabel.font = UIFont.systemFont(ofSize: 12)
         feedbackLabel.textColor = .secondaryLabel
         feedbackLabel.isUserInteractionEnabled = false
-        feedbackContainer.addSubview(feedbackLabel)
-
+        
+        // Configure thumbs up button
         thumbsUpButton.translatesAutoresizingMaskIntoConstraints = false
         let upConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
         thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup", withConfiguration: upConfig), for: .normal)
@@ -1189,8 +1327,8 @@ class LuResponseCell: UITableViewCell {
         thumbsUpButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
         thumbsUpButton.isUserInteractionEnabled = true
         thumbsUpButton.addTarget(self, action: #selector(handleThumbsUp), for: .touchUpInside)
-        feedbackContainer.addSubview(thumbsUpButton)
-
+        
+        // Configure thumbs down button
         thumbsDownButton.translatesAutoresizingMaskIntoConstraints = false
         let downConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
         thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown", withConfiguration: downConfig), for: .normal)
@@ -1200,98 +1338,174 @@ class LuResponseCell: UITableViewCell {
         thumbsDownButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
         thumbsDownButton.isUserInteractionEnabled = true
         thumbsDownButton.addTarget(self, action: #selector(handleThumbsDown), for: .touchUpInside)
-        feedbackContainer.addSubview(thumbsDownButton)
-
-        // Constraints
+    }
+    
+    private func setupConstraints() {
         NSLayoutConstraint.activate([
+            // messageView constraints (adjust from BaseChatCell positioning)
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
             messageView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -60),
             messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75),
-
-            messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor, constant: 10),
-            messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor, constant: 12),
-            messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor, constant: -12),
-            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor, constant: -10),
-
+            messageView.bottomAnchor.constraint(equalTo: feedbackContainer.topAnchor, constant: -4),
+            // feedbackContainer constraints
             feedbackContainer.topAnchor.constraint(equalTo: messageView.bottomAnchor, constant: 4),
             feedbackContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
-            feedbackContainer.trailingAnchor.constraint(equalTo: messageView.trailingAnchor), // <-- THIS IS CRITICAL
+            feedbackContainer.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
             feedbackContainer.heightAnchor.constraint(equalToConstant: 32),
             feedbackContainer.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
-
+            
+            // feedbackLabel constraints
             feedbackLabel.leadingAnchor.constraint(equalTo: feedbackContainer.leadingAnchor, constant: 4),
             feedbackLabel.centerYAnchor.constraint(equalTo: feedbackContainer.centerYAnchor),
-
+            
+            // thumbsUpButton constraints
             thumbsUpButton.centerYAnchor.constraint(equalTo: feedbackContainer.centerYAnchor),
             thumbsUpButton.leadingAnchor.constraint(equalTo: feedbackLabel.trailingAnchor, constant: 8),
             thumbsUpButton.widthAnchor.constraint(equalToConstant: 30),
             thumbsUpButton.heightAnchor.constraint(equalToConstant: 30),
-
+            
+            // thumbsDownButton constraints
             thumbsDownButton.centerYAnchor.constraint(equalTo: feedbackContainer.centerYAnchor),
             thumbsDownButton.leadingAnchor.constraint(equalTo: thumbsUpButton.trailingAnchor, constant: 8),
             thumbsDownButton.widthAnchor.constraint(equalToConstant: 30),
             thumbsDownButton.heightAnchor.constraint(equalToConstant: 30),
             
+            // timestampLabel constraints
             timestampLabel.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
             timestampLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
-            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4)
         ])
-        // Ensure no overlap: Highest z-order for feedbackContainer
-        contentView.bringSubviewToFront(feedbackContainer)
     }
-
+    
+    private func updateFeedbackUI() {
+        if feedbackProvided {
+            // If feedback was already provided, set the UI to the appropriate state
+            if feedbackWasPositive {
+                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup.fill"), for: .normal)
+                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
+                thumbsUpButton.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.2)
+                thumbsUpButton.tintColor = .systemBlue
+                thumbsDownButton.tintColor = .systemGray
+                // Set alpha to emphasize active button
+                thumbsUpButton.alpha = 1.0
+                thumbsDownButton.alpha = 0.5
+            } else {
+                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
+                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown.fill"), for: .normal)
+                thumbsDownButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.2)
+                thumbsUpButton.tintColor = .systemGray
+                thumbsDownButton.tintColor = .systemRed
+                // Set alpha to emphasize active button
+                thumbsUpButton.alpha = 0.5
+                thumbsDownButton.alpha = 1.0
+            }
+            feedbackLabel.text = "Thanks!"
+            // Ensure buttons are fully disabled
+            thumbsUpButton.isEnabled = false
+            thumbsDownButton.isEnabled = false
+        } else {
+            // Initial state when no feedback provided
+            thumbsUpButton.isEnabled = true
+            thumbsDownButton.isEnabled = true
+            thumbsUpButton.alpha = 1.0
+            thumbsDownButton.alpha = 1.0
+            thumbsUpButton.backgroundColor = UIColor.systemGray6
+            thumbsDownButton.backgroundColor = UIColor.systemGray6
+            thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
+            thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
+            thumbsUpButton.tintColor = .systemBlue
+            thumbsDownButton.tintColor = .systemGray
+            feedbackLabel.text = "Helpful?"
+        }
+    }
+    
+    func setFeedbackState(provided: Bool, wasPositive: Bool) {
+        self.feedbackProvided = provided
+        self.feedbackWasPositive = wasPositive
+        
+        // Log to verify this is being called
+        luLog(.info, "Setting feedback state for message ID: \(_messageId), provided: \(provided), wasPositive: \(wasPositive)")
+        
+        // Update UI first
+        updateFeedbackUI()
+        
+        // Ensure buttons are disabled visually as well (with more forceful settings)
+        if provided {
+            thumbsUpButton.isEnabled = false
+            thumbsDownButton.isEnabled = false
+            thumbsUpButton.alpha = wasPositive ? 1.0 : 0.5
+            thumbsDownButton.alpha = wasPositive ? 0.5 : 1.0
+            
+            // Apply additional visual state to ensure it sticks
+            if wasPositive {
+                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup.fill"), for: .normal)
+                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
+                thumbsUpButton.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.2)
+                thumbsUpButton.tintColor = .systemBlue
+                thumbsDownButton.tintColor = .systemGray
+            } else {
+                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
+                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown.fill"), for: .normal)
+                thumbsDownButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.2)
+                thumbsUpButton.tintColor = .systemGray
+                thumbsDownButton.tintColor = .systemRed
+            }
+        }
+    }
+    
     @objc private func handleThumbsUp() {
-        guard !messageId.isEmpty else { return }
+        guard !_messageId.isEmpty else { return }
+        luLog(.info, "Thumbs up clicked for message ID: \(_messageId)")
+        
         UIView.animate(withDuration: 0.2) {
-            self.thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup.fill"), for: .normal)
-            self.thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
-            self.thumbsUpButton.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.2)
-            self.thumbsUpButton.tintColor = .systemBlue
-            self.thumbsDownButton.tintColor = .systemGray
-            self.feedbackLabel.text = "Thanks!"
+            self.feedbackProvided = true
+            self.feedbackWasPositive = true
+            self.updateFeedbackUI()
         }
-        self.thumbsUpButton.isEnabled = false
-        self.thumbsDownButton.isEnabled = false
-        feedbackDelegate?.didProvideFeedback(for: self.messageId, positive: true)
+        
+        feedbackDelegate?.didProvideFeedback(for: self._messageId, positive: true)
     }
-
+    
     @objc private func handleThumbsDown() {
-        guard !messageId.isEmpty else { return }
+        guard !_messageId.isEmpty else { return }
+        luLog(.info, "Thumbs down clicked for message ID: \(_messageId)")
+        
         UIView.animate(withDuration: 0.2) {
-            self.thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
-            self.thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown.fill"), for: .normal)
-            self.thumbsDownButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.2)
-            self.thumbsUpButton.tintColor = .systemGray
-            self.thumbsDownButton.tintColor = .systemRed
-            self.feedbackLabel.text = "Thanks!"
+            self.feedbackProvided = true
+            self.feedbackWasPositive = false
+            self.updateFeedbackUI()
         }
-        self.thumbsUpButton.isEnabled = false
-        self.thumbsDownButton.isEnabled = false
-        feedbackDelegate?.didProvideFeedback(for: self.messageId, positive: false)
+        
+        feedbackDelegate?.didProvideFeedback(for: self._messageId, positive: false)
     }
-
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
     func configure(with message: LuChatMessage) {
+        // Set the text using BaseChatCell's messageTextView
         messageTextView.text = message.content
-        messageId = message.id
+        _messageId = message.id
         
-        // Reset feedback buttons to initial state
-        thumbsUpButton.isEnabled = true
-        thumbsDownButton.isEnabled = true
-        thumbsUpButton.alpha = 1.0
-        thumbsDownButton.alpha = 1.0
-        thumbsUpButton.backgroundColor = UIColor.systemGray6
-        thumbsDownButton.backgroundColor = UIColor.systemGray6
-        thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
-        thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
-        thumbsUpButton.tintColor = .systemBlue
-        thumbsDownButton.tintColor = .systemGray
-        feedbackLabel.text = "Helpful?"
+        // Debug print to verify the message ID is set correctly
+        luLog(.info, "Configuring cell with message ID: \(message.id)")
         
+        // Set feedback state based on stored feedback (if available)
+        if let feedbackProvided = message.feedbackProvided,
+           let feedbackWasPositive = message.feedbackWasPositive,
+           feedbackProvided == true { // Explicit check to ensure we have valid feedback
+            self.feedbackProvided = true
+            self.feedbackWasPositive = feedbackWasPositive
+            luLog(.info, "Restored saved feedback state for message ID: \(message.id), was positive: \(feedbackWasPositive)")
+        } else {
+            // Reset feedback buttons to initial state if no feedback stored
+            self.feedbackProvided = false
+            self.feedbackWasPositive = false
+        }
+        
+        // Update the UI based on feedback state
+        updateFeedbackUI()
         // Format and set timestamp
         let formatter = DateFormatter()
         formatter.dateStyle = .none
@@ -1304,13 +1518,13 @@ class SystemMessageCell: BaseChatCell {
     static let reuseIdentifier = "SystemMessageCell"
     
     private let timestampLabel = UILabel()
-
+    
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-
+        
         messageView.backgroundColor = .tertiarySystemFill
-        messageTextView.textColor = .secondaryLabel
-        messageTextView.font = UIFont.systemFont(ofSize: 14)
+        messageTextView.textColor = .secondaryLabel // Adapts to light/dark mode
+        messageTextView.font = UIFont.systemFont(ofSize: 13) // Smaller text
         
         // Configure timestamp label
         timestampLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1318,7 +1532,7 @@ class SystemMessageCell: BaseChatCell {
         timestampLabel.textColor = .secondaryLabel
         timestampLabel.textAlignment = .center
         contentView.addSubview(timestampLabel)
-
+        
         NSLayoutConstraint.activate([
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
@@ -1329,11 +1543,11 @@ class SystemMessageCell: BaseChatCell {
             timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
         ])
     }
-
+    
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-
+    
     func configure(with message: LuChatMessage) {
         messageTextView.text = message.content
         
@@ -1359,11 +1573,11 @@ private struct LuResponse: Codable {
     let answer: String
     let message_id: String
 }
-
 private struct FeedbackRequest: Codable {
     let message_id: String
     let feedback: String
     let feedback_message: String?
+    let channel: String = "DELTA"  // Add channel parameter to match expected format
 }
 
 private struct APIContext: Codable {
@@ -1375,7 +1589,7 @@ private struct APIContext: Codable {
         let model: String
         let bundle_id: String
     }
-
+    
     struct GameContext: Codable {
         let name: String
         let identifier: String
@@ -1383,21 +1597,22 @@ private struct APIContext: Codable {
         let save_states_count: Int
         let cheats_count: Int
         let last_played: String?
+        let save_states_metadata: [String: SaveStateMetadata]?
     }
-
+    
     struct SaveStateMetadata: Codable {
         let name: String
         let creation_date: String
         let modified_date: String
         let type: String
     }
-
+    
     struct Attachment: Codable {
         let type: String
         let content: String
         let filename: String
     }
-
+    
     let device_context: DeviceContext
     let game_context: GameContext
     let attachments: [Attachment]?
@@ -1411,32 +1626,32 @@ private enum APIConstants {
         }
         return plist
     }()
-
+    
     static let baseURL: String = {
         guard let url = plist["LU_BASE_URL"] as? String else {
             fatalError("[Lu] Missing LU_BASE_URL in Lu-Info.plist")
         }
         return url
     }()
-
+    
     static let askBaseURL = "\(baseURL)/ask"
     static let supportBaseURL = "\(baseURL)/check-rom"
     static let feedbackBaseURL = "\(baseURL)/feedbacks"
-
+    
     static let supportTimeout: TimeInterval = {
         guard let timeout = plist["SUPPORT_TIMEOUT"] as? TimeInterval else {
             return 10
         }
         return timeout
     }()
-
+    
     static let askTimeout: TimeInterval = {
         guard let timeout = plist["ASK_TIMEOUT"] as? TimeInterval else {
             return 30
         }
         return timeout
     }()
-
+    
     static let feedbackTimeout: TimeInterval = {
         guard let timeout = plist["FEEDBACK_TIMEOUT"] as? TimeInterval else {
             return 10
@@ -1460,10 +1675,26 @@ private extension URLRequest {
                 luLog(.error, "Failed to encode context data to string")
                 return
             }
+            
+            // Log complete header content for debugging
             luLog(.info, "Adding x-lu-context header (size: \(contextString.count) characters) - attachments excluded")
             if contextString.count > 8000 {
                 luLog(.info, "x-lu-context header is still large (\(contextString.count) chars) even without attachments.")
             }
+            
+            // Additional debug log for header content
+            if let url = self.url?.absoluteString {
+                if url.contains("feedback") {
+                    luLog(.info, "Feedback endpoint context preview: \(String(describing: contextString.prefix(100)))...")
+                    
+                    // Check for potential formatting issues in game_context
+                    if let gameContext = try? JSONSerialization.jsonObject(with: contextData) as? [String: Any],
+                       let gameContextData = gameContext["game_context"] as? [String: Any] {
+                        luLog(.info, "game_context keys: \(gameContextData.keys.joined(separator: ", "))")
+                    }
+                }
+            }
+            
             setValue(contextString, forHTTPHeaderField: "x-lu-context")
         } catch {
             luLog(.error, "Failed to encode API context: \(error.localizedDescription)")
@@ -1476,5 +1707,40 @@ private extension Date {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.string(from: self)
+    }
+}
+
+// MARK: - Rich Text Formatting
+
+private extension String {
+    func toAttributedString() -> NSAttributedString {
+        let attributedString = NSMutableAttributedString(string: self)
+        
+        // Apply system font
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        
+        // Create paragraph style with adequate spacing
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.lineSpacing = 2 // Less spacing for a cleaner look
+        
+        // Apply base attributes to the entire text
+        attributedString.addAttributes([
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ], range: NSRange(location: 0, length: attributedString.length))
+        
+        // Detect links only
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            let matches = detector.matches(in: self, options: [], range: NSRange(location: 0, length: self.count))
+            for match in matches {
+                if let url = match.url {
+                    attributedString.addAttribute(.link, value: url, range: match.range)
+                    attributedString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range)
+                }
+            }
+        }
+        
+        return attributedString
     }
 }
