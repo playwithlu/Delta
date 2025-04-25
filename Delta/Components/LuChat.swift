@@ -193,6 +193,7 @@ class LuChatViewController: UIViewController {
     private var isAskingQuestion = false
     private var isHandlingSendFeedback = false
     private var isGeneralChat = false
+    private let isFromGamesViewController: Bool
     
     // UI Components
     private lazy var tableView: UITableView = {
@@ -289,10 +290,11 @@ class LuChatViewController: UIViewController {
     private var questionBarBottomConstraint: NSLayoutConstraint!
     
     // MARK: - Initialization
-    init(game: Game, emulatorCore: EmulatorCore?, isGeneralChat: Bool = false) {
+    init(game: Game, emulatorCore: EmulatorCore?, isGeneralChat: Bool = false, isFromGamesViewController: Bool = false) {
         self.game = game
         self.emulatorCore = emulatorCore
         self.isGeneralChat = isGeneralChat
+        self.isFromGamesViewController = isFromGamesViewController
         self.conversation = LuChatManager.shared.getOrCreateConversation(
             gameId: ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId,
             gameName: game.name
@@ -953,11 +955,11 @@ class LuChatViewController: UIViewController {
         }
         task.resume()
     }
-            
-            
-    // MARK: - API Context Creation
     
+    
+    // MARK: - API Context Creation
     private func createAPIContext(for game: Game, emulatorCore: EmulatorCore?, includeAttachments: Bool) -> APIContext {
+        // Device context setup
         let deviceContext = APIContext.DeviceContext(
             device_id: UIDevice.current.identifierForVendor?.uuidString ?? "unknown",
             device_name: UIDevice.current.name,
@@ -967,96 +969,135 @@ class LuChatViewController: UIViewController {
             bundle_id: Bundle.main.bundleIdentifier ?? "unknown"
         )
         
-        var saveStatesMetadata: [String: APIContext.SaveStateMetadata] = [:]
-        
-        if ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData {
-            let saveStates = SaveState.instancesWithPredicate(
-                NSPredicate(format: "%K == %@", #keyPath(SaveState.game), game),
-                inManagedObjectContext: DatabaseManager.shared.viewContext,
-                type: SaveState.self
-            )
+        // Game context setup
+        var gameContext: APIContext.GameContext
+        if isFromGamesViewController {
+            let gameCollections = fetchGameCollections()
+            var allGames: [Game] = []
+            var totalGames = 0
+            for collection in gameCollections {
+                let gamesInCollection = collection.games.count
+                totalGames += gamesInCollection
+                allGames.append(contentsOf: collection.games)
+            }
             
-            for saveState in saveStates {
-                saveStatesMetadata[saveState.identifier] = APIContext.SaveStateMetadata(
-                    name: saveState.name ?? "Untitled",
-                    creation_date: saveState.creationDate.ISO8601String(),
-                    modified_date: saveState.modifiedDate.ISO8601String(),
-                    type: {
-                        switch saveState.type {
-                        case .auto: return "auto"
-                        case .quick: return "quick"
-                        case .general: return "general"
-                        case .locked: return "locked"
-                        }
-                    }()
+            // Sort games by playedDate (most recent first) and limit to 15
+            let sortedGames = allGames.sorted { (game1, game2) -> Bool in
+                guard let date1 = game1.playedDate else { return false }
+                guard let date2 = game2.playedDate else { return true }
+                return date1 > date2
+            }
+            let limitedGames = Array(sortedGames.prefix(15))
+            
+            let gameInfos = limitedGames.map { game -> APIContext.MinimalGameInfo in
+                return APIContext.MinimalGameInfo(
+                    name: game.name,
+                    identifier: game.identifier,
+                    type: game.type.rawValue,
+                    save_states_count: game.saveStates.count,
+                    cheats_count: game.cheats.count,
+                    last_played: game.playedDate?.ISO8601String()
                 )
             }
+            gameContext = APIContext.GameContext(
+                name: "Game Selection",
+                identifier: UUID().uuidString,
+                type: "",
+                save_states_count: 0,
+                cheats_count: 0,
+                last_played: nil,
+                save_states_metadata: nil,
+                total_games: totalGames,
+                games_loaded: gameInfos
+            )
+        } else {
+            var saveStatesMetadata: [String: APIContext.SaveStateMetadata] = [:]
+            if ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData {
+                let saveStates = SaveState.instancesWithPredicate(
+                    NSPredicate(format: "%K == %@", #keyPath(SaveState.game), game),
+                    inManagedObjectContext: DatabaseManager.shared.viewContext,
+                    type: SaveState.self
+                )
+                
+                // Sort save states by modifiedDate (most recent first) and limit to 5
+                let sortedSaveStates = saveStates.sorted { $0.modifiedDate > $1.modifiedDate }.prefix(5)
+                
+                for saveState in sortedSaveStates {
+                    saveStatesMetadata[saveState.identifier] = APIContext.SaveStateMetadata(
+                        name: saveState.name ?? "Untitled",
+                        creation_date: saveState.creationDate.ISO8601String(),
+                        modified_date: saveState.modifiedDate.ISO8601String(),
+                        type: {
+                            switch saveState.type {
+                            case .auto: return "auto"
+                            case .quick: return "quick"
+                            case .general: return "general"
+                            case .locked: return "locked"
+                            }
+                        }()
+                    )
+                }
+            }
+            gameContext = APIContext.GameContext(
+                name: game.name,
+                identifier: game.identifier,
+                type: game.type.rawValue,
+                save_states_count: game.saveStates.count,
+                cheats_count: game.cheats.count,
+                last_played: game.playedDate?.ISO8601String(),
+                save_states_metadata: ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData && !saveStatesMetadata.isEmpty ? saveStatesMetadata : nil,
+                total_games: nil,
+                games_loaded: nil
+            )
         }
         
-        let gameContext = APIContext.GameContext(
-            name: game.name,
-            identifier: game.identifier,
-            type: game.type.rawValue,
-            save_states_count: game.saveStates.count,
-            cheats_count: game.cheats.count,
-            last_played: game.playedDate?.ISO8601String(),
-            save_states_metadata: ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData && !saveStatesMetadata.isEmpty ? saveStatesMetadata : nil
-        )
-        
+        // Attachments setup
         var attachments: [APIContext.Attachment]? = nil
-        
-        if includeAttachments && emulatorCore != nil {
+        if includeAttachments && emulatorCore != nil && ExperimentalFeatures.shared.Lu.wrappedValue.supportsAttachments {
             var contextAttachments: [APIContext.Attachment] = []
-            var tempSaveStateURL: URL? = nil
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
+            let timestamp = dateFormatter.string(from: Date())
             
-            if includeAttachments && ExperimentalFeatures.shared.Lu.wrappedValue.supportsAttachments,
-               let snapshot = emulatorCore?.videoManager.snapshot(),
+            if let snapshot = emulatorCore?.videoManager.snapshot(),
                let imageData = snapshot.pngData() {
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
-                let timestamp = dateFormatter.string(from: Date())
-                
                 let screenshotAttachment = APIContext.Attachment(
                     type: "screenshot",
                     content: imageData.base64EncodedString(),
                     filename: "screen_\(timestamp).png"
                 )
-                
                 contextAttachments.append(screenshotAttachment)
-                luLog(.info, "Added screenshot to API context")
             }
             
-            if includeAttachments && ExperimentalFeatures.shared.Lu.wrappedValue.supportsSavestates && emulatorCore != nil {
-                tempSaveStateURL = FileManager.default.temporaryDirectory.appendingPathComponent("lu_temp_\(UUID().uuidString)")
-                
-                // Create a temporary save state
-                let tempSaveState = emulatorCore!.saveSaveState(to: tempSaveStateURL!)
-                
-                if let saveStateData = try? Data(contentsOf: tempSaveState.fileURL) {
-                    let saveStateAttachment = APIContext.Attachment(
-                        type: "save_state",
-                        content: saveStateData.base64EncodedString(),
-                        filename: "state_\(tempSaveStateURL!.lastPathComponent)"
-                    )
-                    contextAttachments.append(saveStateAttachment)
-                    
-                    // Clean up temporary save state file
-                    if let url = tempSaveStateURL {
-                        do {
-                            try FileManager.default.removeItem(at: url)
-                        } catch {
-                            luLog(.error, "Failed to delete temporary save state file: \(error.localizedDescription)")
-                        }
+            if ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData {
+                let temporaryDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                let tempSaveStateURL = temporaryDirectoryURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("deltasave")
+                luLog(.info, "Generating temporary save state at \(tempSaveStateURL.path)")
+                do {
+                    try emulatorCore?.saveSaveState(to: tempSaveStateURL)
+                    if let saveStateData = try? Data(contentsOf: tempSaveStateURL) {
+                        let saveStateAttachment = APIContext.Attachment(
+                            type: "save_state",
+                            content: saveStateData.base64EncodedString(),
+                            filename: "state_\(tempSaveStateURL.lastPathComponent)"
+                        )
+                        contextAttachments.append(saveStateAttachment)
+                        luLog(.info, "Successfully added save state attachment (\(saveStateData.count) bytes)")
+                        try FileManager.default.removeItem(at: tempSaveStateURL)
+                        luLog(.info, "Cleaned up temporary save state file")
+                    } else {
+                        luLog(.error, "Failed to read temporary save state data")
                     }
+                } catch {
+                    luLog(.error, "Failed to generate temporary save state: \(error.localizedDescription)")
                 }
             }
-            
             if !contextAttachments.isEmpty {
                 attachments = contextAttachments
             }
         }
         
-        // Return the API context
+        // Final return
         return APIContext(
             device_context: deviceContext,
             game_context: gameContext,
@@ -1064,7 +1105,6 @@ class LuChatViewController: UIViewController {
         )
     }
 }
-
 // MARK: - UITableViewDataSource
 extension LuChatViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -1590,6 +1630,15 @@ private struct APIContext: Codable {
         let bundle_id: String
     }
     
+    struct MinimalGameInfo: Codable {
+        let name: String
+        let identifier: String
+        let type: String
+        let save_states_count: Int
+        let cheats_count: Int
+        let last_played: String?
+    }
+    
     struct GameContext: Codable {
         let name: String
         let identifier: String
@@ -1598,6 +1647,9 @@ private struct APIContext: Codable {
         let cheats_count: Int
         let last_played: String?
         let save_states_metadata: [String: SaveStateMetadata]?
+        // Add collection fields to GameContext
+        let total_games: Int?
+        let games_loaded: [MinimalGameInfo]?
     }
     
     struct SaveStateMetadata: Codable {
@@ -1742,5 +1794,23 @@ private extension String {
         }
         
         return attributedString
+    }
+}
+
+// MARK: - Game Collection Utilities
+extension LuChatViewController {
+    /// Fetches all game collections from Core Data
+    private func fetchGameCollections() -> [GameCollection] {
+        let fetchRequest: NSFetchRequest<GameCollection> = GameCollection.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \GameCollection.index, ascending: true)]
+        
+        do {
+            let collections = try DatabaseManager.shared.viewContext.fetch(fetchRequest)
+            luLog(.info, "Fetched \(collections.count) game collections")
+            return collections
+        } catch {
+            luLog(.error, "Failed to fetch game collections: \(error.localizedDescription)")
+            return []
+        }
     }
 }

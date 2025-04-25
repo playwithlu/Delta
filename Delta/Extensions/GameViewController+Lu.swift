@@ -489,6 +489,7 @@ extension GameViewController {
             }
         }
         
+        
         let gameContext = APIContext.GameContext(
             name: game.name,
             identifier: game.identifier,
@@ -496,8 +497,8 @@ extension GameViewController {
             save_states_count: game.saveStates.count,
             cheats_count: game.cheats.count,
             last_played: game.playedDate?.ISO8601String()
+            // Removed save_states_metadata parameter
         )
-        
         var attachments: [APIContext.Attachment]? = nil
         
         if includeAttachments && ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData {
@@ -787,8 +788,28 @@ extension GamesViewController {
         dummyGame.name = "Game Selection"
         dummyGame.identifier = hardcodedGameId
         
+        // Get all available games to provide metadata for save states
+
+        let allGames = Game.instancesWithPredicate(
+            NSPredicate(value: true),  // Predicate that matches all games
+            inManagedObjectContext: DatabaseManager.shared.viewContext,
+            type: Game.self
+        )
+        var gamesWithSaveStates = [Game]()
+        
+        // Filter to only games with save states
+        for game in allGames {
+            if game.saveStates.count > 0 {
+                gamesWithSaveStates.append(game)
+            }
+        }
+        
         // Launch LuChatViewController directly with nil emulatorCore
-        let chatViewController = LuChatViewController(game: dummyGame, emulatorCore: nil)
+        // Include a comment in the question about querying save states
+        let chatViewController = LuChatViewController(game: dummyGame, emulatorCore: nil, isFromGamesViewController: true)
+
+        // Log the information instead
+        luLog(.info, "Found \(gamesWithSaveStates.count) games with save states")
         let navigationController = UINavigationController(rootViewController: chatViewController)
         present(navigationController, animated: true)
     }
@@ -813,7 +834,6 @@ extension GamesViewController {
             }
         }
     }
-    
     // Swizzled view controller methods
     @objc func swizzled_viewDidAppear(_ animated: Bool) {
         // Call the original implementation
