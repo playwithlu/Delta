@@ -1,17 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "Icon1024.png",
-      "idiom" : "universal"
-    },
-    {
-      "appearances" : [
-        {
-          "appearance" : "luminosity",
-          "value" : "dark"
-        }
-      ],
-      "filename" : "AppIcon_Dark.png",
+      "filename" : "LuAppIconDelta.png",
       "idiom" : "universal"
     }
   ],
