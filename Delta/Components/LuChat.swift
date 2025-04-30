@@ -174,6 +174,320 @@ class LuChatManager {
         }
     }
 }
+
+// MARK: - Message Cell Classes
+class BaseChatCell: UITableViewCell {
+    let messageView = UIView()
+    let messageTextView = UITextView()
+    
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        
+        selectionStyle = .none
+        backgroundColor = .clear
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+        contentView.isUserInteractionEnabled = true
+        
+        messageView.translatesAutoresizingMaskIntoConstraints = false
+        messageView.layer.cornerRadius = 12 // Standard chat bubble corner radius
+        messageView.clipsToBounds = true
+        contentView.addSubview(messageView)
+        messageTextView.translatesAutoresizingMaskIntoConstraints = false
+        messageTextView.font = UIFont.preferredFont(forTextStyle: .body)
+        messageTextView.adjustsFontForContentSizeCategory = true
+        messageTextView.isEditable = false
+        messageTextView.isSelectable = false
+        messageTextView.isScrollEnabled = false
+        messageTextView.backgroundColor = .clear
+        messageTextView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        messageTextView.textContainer.lineFragmentPadding = 0
+        messageTextView.dataDetectorTypes = [.link, .phoneNumber]
+        messageTextView.isUserInteractionEnabled = true
+        messageView.addSubview(messageTextView)
+        
+        NSLayoutConstraint.activate([
+            // Only set up messageTextView constraints in the base class
+            // Let subclasses handle the positioning of messageView
+            messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor),
+            messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
+            messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
+            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor)
+        ])
+    }
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+class UserMessageCell: BaseChatCell {
+    static let reuseIdentifier = "UserMessageCell"
+    
+    private let timestampLabel = UILabel()
+    
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        
+        messageView.backgroundColor = .systemBlue
+        messageTextView.textColor = .white
+        
+        // Configure timestamp label
+        timestampLabel.translatesAutoresizingMaskIntoConstraints = false
+        timestampLabel.font = UIFont.systemFont(ofSize: 11)
+        timestampLabel.textColor = .secondaryLabel
+        timestampLabel.textAlignment = .right
+        contentView.addSubview(timestampLabel)
+        
+        NSLayoutConstraint.activate([
+            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            messageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
+            messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
+            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75),
+            
+            timestampLabel.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
+            timestampLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
+            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+        ])
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func configure(with message: LuChatMessage) {
+        messageTextView.text = message.content
+        
+        // Format and set timestamp
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        timestampLabel.text = formatter.string(from: message.timestamp)
+    }
+}
+
+class LuResponseCell: BaseChatCell {
+    static let reuseIdentifier = "LuResponseCell"
+    
+    let followUpContainer = UIStackView()
+    let timestampLabel = UILabel()
+    
+    weak var followUpDelegate: LuFollowUpQuestionDelegate?
+    weak var feedbackDelegate: LuResponseFeedbackDelegate?
+    private var _messageId: String = ""
+    private var feedbackProvided: Bool = false
+    private var feedbackWasPositive: Bool = false
+    
+    var messageId: String {
+        return _messageId
+    }
+    
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        
+        // Set up LuResponseCell-specific UI elements
+        setupUI()
+        setupAppearance()
+        setupConstraints()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    private func setupUI() {
+        // Configure follow-up questions container
+        followUpContainer.translatesAutoresizingMaskIntoConstraints = false
+        followUpContainer.axis = .vertical
+        followUpContainer.spacing = 8
+        followUpContainer.distribution = .fillProportionally
+        followUpContainer.alignment = .leading
+        contentView.addSubview(followUpContainer)
+        
+        // Add timestamp label to contentView
+        timestampLabel.translatesAutoresizingMaskIntoConstraints = false
+        timestampLabel.font = UIFont.systemFont(ofSize: 11)
+        timestampLabel.textColor = .secondaryLabel
+        timestampLabel.textAlignment = .left
+        contentView.addSubview(timestampLabel)
+        
+        // Bring to front to ensure proper z-order
+        contentView.bringSubviewToFront(followUpContainer)
+    }
+    
+    private func setupAppearance() {
+        // Configure messageView which comes from BaseChatCell
+        messageView.backgroundColor = UIColor { traitCollection in
+            return traitCollection.userInterfaceStyle == .dark ?
+            UIColor(red: 0.20, green: 0.20, blue: 0.25, alpha: 1.0) : // Slightly bluer dark gray for dark mode
+            UIColor(red: 0.87, green: 0.87, blue: 0.97, alpha: 1.0)   // Lighter blue-gray for light mode
+        }
+        messageView.layer.cornerRadius = 12 // Ensure corner radius is set
+        
+        // Configure text color for messageTextView which comes from BaseChatCell
+        messageTextView.textColor = UIColor { traitCollection in
+            return traitCollection.userInterfaceStyle == .dark ? .white : .black
+        }
+    }
+    
+    private func setupConstraints() {
+        NSLayoutConstraint.activate([
+            // messageView constraints
+            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            messageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            messageView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -60),
+            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75),
+            messageView.bottomAnchor.constraint(equalTo: followUpContainer.topAnchor, constant: -8),
+            
+            // followUpContainer constraints
+            followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
+            followUpContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -12),
+            followUpContainer.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -8),
+            
+            // timestampLabel constraints
+            timestampLabel.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
+            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+        ])
+    }
+    
+    @objc private func handleFollowUpTap(_ sender: UIButton) {
+        guard let question = sender.titleLabel?.text else { return }
+        followUpDelegate?.didSelectFollowUpQuestion(question)
+    }
+    
+    private func setupFollowUpButtons(questions: [String]) {
+        // Remove any existing follow-up buttons
+        followUpContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        
+        guard !questions.isEmpty else { return }
+        
+        // Add up to 3 questions
+        for (index, question) in questions.prefix(3).enumerated() {
+            let button = UIButton(type: .system)
+            button.setTitle(question, for: .normal)
+            button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            button.titleLabel?.numberOfLines = 0
+            button.titleLabel?.lineBreakMode = .byWordWrapping
+            button.setTitleColor(.systemBlue, for: .normal)
+            button.backgroundColor = UIColor.systemGray6
+            button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+            button.layer.cornerRadius = 16
+            button.layer.borderWidth = 1
+            button.layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.3).cgColor
+            button.clipsToBounds = true
+            button.addTarget(self, action: #selector(handleFollowUpTap(_:)), for: .touchUpInside)
+            
+            // Add to vertical stack
+            followUpContainer.addArrangedSubview(button)
+            
+            // Set content hugging priority to ensure buttons expand to show full text
+            button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        
+        // Remove all follow-up buttons
+        followUpContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        
+        // Reset feedback state
+        feedbackProvided = false
+        feedbackWasPositive = false
+        
+        // Clear any other state
+        _messageId = ""
+        followUpDelegate = nil
+        feedbackDelegate = nil
+    }
+    
+    func configure(with message: LuChatMessage) {
+        // Set the text using BaseChatCell's messageTextView
+        messageTextView.text = message.content
+        _messageId = message.id
+        
+        // Debug print to verify the message ID is set correctly
+        luLog(.info, "Configuring cell with message ID: \(message.id)")
+        
+        // Set up follow-up buttons
+        if let followUpQuestions = message.followUpQuestions, !followUpQuestions.isEmpty {
+            setupFollowUpButtons(questions: followUpQuestions)
+        } else {
+            // For initial implementation, create dummy follow-up questions
+            let dummyQuestions = [
+                "How do I beat this level?",
+                "What are the best power-ups?",
+                "Any hidden secrets or cheats?"
+            ]
+            setupFollowUpButtons(questions: dummyQuestions)
+        }
+        
+        // Store feedback state
+        if let feedbackProvided = message.feedbackProvided,
+           let feedbackWasPositive = message.feedbackWasPositive,
+           feedbackProvided == true {
+            self.feedbackProvided = true
+            self.feedbackWasPositive = feedbackWasPositive
+            luLog(.info, "Restored saved feedback state for message ID: \(message.id), was positive: \(feedbackWasPositive)")
+        } else {
+            self.feedbackProvided = false
+            self.feedbackWasPositive = false
+        }
+        
+        // Format and set timestamp
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        timestampLabel.text = formatter.string(from: message.timestamp)
+    }
+}
+
+class SystemMessageCell: BaseChatCell {
+    static let reuseIdentifier = "SystemMessageCell"
+    
+    private let timestampLabel = UILabel()
+    
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        
+        messageView.backgroundColor = .tertiarySystemFill
+        messageTextView.textColor = .secondaryLabel // Adapts to light/dark mode
+        messageTextView.font = UIFont.systemFont(ofSize: 13) // Smaller text
+        
+        // Configure timestamp label
+        timestampLabel.translatesAutoresizingMaskIntoConstraints = false
+        timestampLabel.font = UIFont.systemFont(ofSize: 11)
+        timestampLabel.textColor = .secondaryLabel
+        timestampLabel.textAlignment = .center
+        contentView.addSubview(timestampLabel)
+        
+        NSLayoutConstraint.activate([
+            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            messageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.85),
+            messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
+            
+            timestampLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+        ])
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func configure(with message: LuChatMessage) {
+        messageTextView.text = message.content
+        
+        // Format and set timestamp
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        timestampLabel.text = formatter.string(from: message.timestamp)
+    }
+}
+
 // MARK: - Protocol for feedback actions
 protocol LuResponseFeedbackDelegate: AnyObject {
     func didProvideFeedback(for messageId: String, positive: Bool)
@@ -943,14 +1257,6 @@ class LuChatViewController: UIViewController {
                         }
                     }
                     
-                    // Update any visible cells with the same messageId to maintain feedback state
-                    for cell in self.tableView.visibleCells {
-                        if let responseCell = cell as? LuResponseCell,
-                           responseCell.messageId == messageId {
-                            responseCell.setFeedbackState(provided: true, wasPositive: feedback == "POSITIVE")
-                        }
-                    }
-                    
                     self.tableView.reloadData()
                     self.scrollToBottom(animated: true)
                     return  // Explicitly return to prevent any further processing
@@ -1110,7 +1416,23 @@ class LuChatViewController: UIViewController {
             attachments: attachments
         )
     }
+    
+    // MARK: - Game Collection Utilities
+    private func fetchGameCollections() -> [GameCollection] {
+        let fetchRequest: NSFetchRequest<GameCollection> = GameCollection.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \GameCollection.index, ascending: true)]
+        
+        do {
+            let collections = try DatabaseManager.shared.viewContext.fetch(fetchRequest)
+            luLog(.info, "Fetched \(collections.count) game collections")
+            return collections
+        } catch {
+            luLog(.error, "Failed to fetch game collections: \(error.localizedDescription)")
+            return []
+        }
+    }
 }
+
 // MARK: - UITableViewDataSource
 extension LuChatViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -1130,14 +1452,8 @@ extension LuChatViewController: UITableViewDataSource {
             let cell = tableView.dequeueReusableCell(withIdentifier: LuResponseCell.reuseIdentifier, for: indexPath) as! LuResponseCell
             cell.feedbackDelegate = self
             cell.followUpDelegate = self
-            print("cellForRowAt: Set feedbackDelegate for messageId: \(message.id), cell: \(cell)")
             luLog(.info, "cellForRowAt: Set feedbackDelegate for messageId: \(message.id), cell: \(cell)")
             cell.configure(with: message)
-            #if DEBUG
-            if message.id.starts(with: "8") {
-                luLog(.info, "Lu response cell configured for message ID: \(message.id)")
-            }
-            #endif
             return cell
             
         case .systemMessage:
@@ -1152,6 +1468,82 @@ extension LuChatViewController: UITableViewDataSource {
 extension LuChatViewController: UITableViewDelegate {
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         return UITableView.automaticDimension
+    }
+    
+    func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
+        let message = conversation.messages[indexPath.row]
+        
+        // Only show context menu for Lu responses
+        guard message.type == .luResponse else {
+            return nil
+        }
+        
+        return UIContextMenuConfiguration(identifier: indexPath as NSCopying, previewProvider: nil) { _ in
+            let feedbackProvided = message.feedbackProvided ?? false
+            
+            // Create menu actions
+            var actions: [UIAction] = []
+            
+            if !feedbackProvided {
+                // Helpful feedback action
+                let helpfulAction = UIAction(title: "Helpful", image: UIImage(systemName: "hand.thumbsup")) { [weak self] _ in
+                    self?.handleFeedback(for: message.id, positive: true)
+                }
+                
+                // Not helpful feedback action
+                let notHelpfulAction = UIAction(title: "Not Helpful", image: UIImage(systemName: "hand.thumbsdown")) { [weak self] _ in
+                    self?.handleFeedback(for: message.id, positive: false)
+                }
+                
+                actions.append(helpfulAction)
+                actions.append(notHelpfulAction)
+            } else {
+                // Show disabled feedback status if feedback was already provided
+                let feedbackStatus = message.feedbackWasPositive ?? false ? "Marked as Helpful" : "Marked as Not Helpful"
+                let statusImage = message.feedbackWasPositive ?? false ? UIImage(systemName: "hand.thumbsup.fill") : UIImage(systemName: "hand.thumbsdown.fill")
+                
+                let statusAction = UIAction(title: feedbackStatus, image: statusImage, attributes: .disabled) { _ in }
+                actions.append(statusAction)
+            }
+            
+            // Copy text action
+            let copyAction = UIAction(title: "Copy Text", image: UIImage(systemName: "doc.on.doc")) { _ in
+                UIPasteboard.general.string = message.content
+            }
+            
+            actions.append(copyAction)
+            
+            return UIMenu(title: "", children: actions)
+        }
+    }
+    
+    func tableView(_ tableView: UITableView, previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        guard let indexPath = configuration.identifier as? IndexPath,
+              let cell = tableView.cellForRow(at: indexPath) as? LuResponseCell else {
+            return nil
+        }
+        
+        // Create a target for just the message bubble
+        let parameters = UIPreviewParameters()
+        parameters.backgroundColor = .clear
+        parameters.visiblePath = UIBezierPath(roundedRect: cell.messageView.bounds,
+                                             cornerRadius: cell.messageView.layer.cornerRadius)
+        
+        return UITargetedPreview(view: cell.messageView, parameters: parameters)
+    }
+    
+    func tableView(_ tableView: UITableView, previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        guard let indexPath = configuration.identifier as? IndexPath,
+              let cell = tableView.cellForRow(at: indexPath) as? LuResponseCell else {
+            return nil
+        }
+        
+        let parameters = UIPreviewParameters()
+        parameters.backgroundColor = .clear
+        parameters.visiblePath = UIBezierPath(roundedRect: cell.messageView.bounds,
+                                             cornerRadius: cell.messageView.layer.cornerRadius)
+        
+        return UITargetedPreview(view: cell.messageView, parameters: parameters)
     }
 }
 
@@ -1218,558 +1610,6 @@ extension LuChatViewController: LuFollowUpQuestionDelegate {
         
         // Programmatically trigger send
         handleSend()
-    }
-}
-
-// MARK: - Message Cell Classes
-class BaseChatCell: UITableViewCell {
-    let messageView = UIView()
-    let messageTextView = UITextView()
-    
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        
-        selectionStyle = .none
-        backgroundColor = .clear
-        backgroundColor = .clear
-        contentView.backgroundColor = .clear
-        contentView.isUserInteractionEnabled = true
-        
-        messageView.translatesAutoresizingMaskIntoConstraints = false
-        messageView.layer.cornerRadius = 12 // Standard chat bubble corner radius
-        messageView.clipsToBounds = true
-        contentView.addSubview(messageView)
-        messageTextView.translatesAutoresizingMaskIntoConstraints = false
-        messageTextView.font = UIFont.preferredFont(forTextStyle: .body)
-        messageTextView.adjustsFontForContentSizeCategory = true
-        messageTextView.isEditable = false
-        messageTextView.isSelectable = false
-        messageTextView.isScrollEnabled = false
-        messageTextView.backgroundColor = .clear
-        messageTextView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
-        messageTextView.textContainer.lineFragmentPadding = 0
-        messageTextView.dataDetectorTypes = [.link, .phoneNumber]
-        messageTextView.isUserInteractionEnabled = true
-        messageView.addSubview(messageTextView)
-        
-        NSLayoutConstraint.activate([
-            // Only set up messageTextView constraints in the base class
-            // Let subclasses handle the positioning of messageView
-            messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor),
-            messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
-            messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
-            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor)
-        ])
-    }
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-}
-class UserMessageCell: BaseChatCell {
-    static let reuseIdentifier = "UserMessageCell"
-    
-    private let timestampLabel = UILabel()
-    
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        
-        messageView.backgroundColor = .systemBlue
-        messageTextView.textColor = .white
-        
-        // Configure timestamp label
-        timestampLabel.translatesAutoresizingMaskIntoConstraints = false
-        timestampLabel.font = UIFont.systemFont(ofSize: 11)
-        timestampLabel.textColor = .secondaryLabel
-        timestampLabel.textAlignment = .right
-        contentView.addSubview(timestampLabel)
-        
-        NSLayoutConstraint.activate([
-            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
-            messageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
-            messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75),
-            
-            timestampLabel.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
-            timestampLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
-            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
-        ])
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    func configure(with message: LuChatMessage) {
-        messageTextView.text = message.content
-        
-        // Format and set timestamp
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        timestampLabel.text = formatter.string(from: message.timestamp)
-    }
-}
-
-class LuResponseCell: BaseChatCell {
-    static let reuseIdentifier = "LuResponseCell"
-    
-    let feedbackContainer = UIView()
-    let thumbsUpButton = UIButton(type: .system)
-    let thumbsDownButton = UIButton(type: .system)
-    let feedbackLabel = UILabel()
-    let timestampLabel = UILabel()
-    let followUpContainer = UIStackView()
-    
-    // Store constraints that need to be recreated on reuse
-    private var messageToFollowUpConstraint: NSLayoutConstraint?
-    private var followUpToFeedbackConstraint: NSLayoutConstraint?
-    private var feedbackToTimestampConstraint: NSLayoutConstraint?
-    
-    weak var followUpDelegate: LuFollowUpQuestionDelegate?
-    private var _messageId: String = ""
-    weak var feedbackDelegate: LuResponseFeedbackDelegate?
-    private var feedbackProvided: Bool = false
-    private var feedbackWasPositive: Bool = false
-    
-    var messageId: String {
-        return _messageId
-    }
-    
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        
-        // Set up LuResponseCell-specific UI elements
-        setupFeedbackUI()
-        setupAppearance()
-        setupConstraints()
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    private func setupFeedbackUI() {
-        // Configure follow-up questions container
-        followUpContainer.translatesAutoresizingMaskIntoConstraints = false
-        followUpContainer.axis = .vertical
-        followUpContainer.spacing = 8
-        followUpContainer.distribution = .fillProportionally
-        followUpContainer.alignment = .leading
-        contentView.addSubview(followUpContainer)
-        
-        feedbackContainer.translatesAutoresizingMaskIntoConstraints = false
-        feedbackContainer.backgroundColor = .clear
-        contentView.addSubview(feedbackContainer)
-        
-        // Add timestamp label to contentView
-        timestampLabel.translatesAutoresizingMaskIntoConstraints = false
-        timestampLabel.font = UIFont.systemFont(ofSize: 11)
-        timestampLabel.textColor = .secondaryLabel
-        timestampLabel.textAlignment = .left
-        contentView.addSubview(timestampLabel)
-        
-        // Add thumbs buttons to feedbackContainer
-        feedbackContainer.addSubview(thumbsUpButton)
-        feedbackContainer.addSubview(thumbsDownButton)
-        
-        // Bring to front to ensure proper z-order
-        contentView.bringSubviewToFront(followUpContainer)
-        contentView.bringSubviewToFront(feedbackContainer)
-    }
-    
-    private func setupAppearance() {
-        // Configure messageView which comes from BaseChatCell
-        messageView.backgroundColor = UIColor { traitCollection in
-            return traitCollection.userInterfaceStyle == .dark ?
-            UIColor(red: 0.20, green: 0.20, blue: 0.25, alpha: 1.0) : // Slightly bluer dark gray for dark mode
-            UIColor(red: 0.87, green: 0.87, blue: 0.97, alpha: 1.0)   // Lighter blue-gray for light mode
-        }
-        messageView.layer.cornerRadius = 12 // Ensure corner radius is set
-        
-        // Configure text color for messageTextView which comes from BaseChatCell
-        messageTextView.textColor = UIColor { traitCollection in
-            return traitCollection.userInterfaceStyle == .dark ? .white : .black
-        }
-        
-        // Configure thumbs up button
-        thumbsUpButton.translatesAutoresizingMaskIntoConstraints = false
-        let upConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-        thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup", withConfiguration: upConfig), for: .normal)
-        thumbsUpButton.tintColor = .systemBlue
-        thumbsUpButton.backgroundColor = UIColor.systemGray6
-        thumbsUpButton.layer.cornerRadius = 15
-        thumbsUpButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
-        thumbsUpButton.isUserInteractionEnabled = true
-        thumbsUpButton.addTarget(self, action: #selector(handleThumbsUp), for: .touchUpInside)
-        
-        // Configure thumbs down button
-        thumbsDownButton.translatesAutoresizingMaskIntoConstraints = false
-        let downConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-        thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown", withConfiguration: downConfig), for: .normal)
-        thumbsDownButton.tintColor = .systemGray
-        thumbsDownButton.backgroundColor = UIColor.systemGray6
-        thumbsDownButton.layer.cornerRadius = 15
-        thumbsDownButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 6, bottom: 6, right: 6)
-        thumbsDownButton.isUserInteractionEnabled = true
-        thumbsDownButton.addTarget(self, action: #selector(handleThumbsDown), for: .touchUpInside)
-    }
-    
-    private func setupConstraints() {
-        // Verify all views are in the hierarchy before creating constraints
-        if messageView.superview != contentView {
-            contentView.addSubview(messageView)
-        }
-        if followUpContainer.superview != contentView {
-            contentView.addSubview(followUpContainer)
-        }
-        if feedbackContainer.superview != contentView {
-            contentView.addSubview(feedbackContainer)
-        }
-        if timestampLabel.superview != contentView {
-            contentView.addSubview(timestampLabel)
-        }
-        
-        // Create safe constraints that can be activated/deactivated for cell reuse
-        messageToFollowUpConstraint = messageView.bottomAnchor.constraint(equalTo: followUpContainer.topAnchor, constant: -8)
-        followUpToFeedbackConstraint = followUpContainer.bottomAnchor.constraint(equalTo: feedbackContainer.topAnchor, constant: -8)
-        feedbackToTimestampConstraint = feedbackContainer.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2)
-        
-        NSLayoutConstraint.activate([
-            // messageView constraints (adjust from BaseChatCell positioning)
-            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
-            messageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            messageView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -60),
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75),
-            messageToFollowUpConstraint!,
-            
-            // followUpContainer constraints
-            followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
-            followUpContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -12),
-            followUpToFeedbackConstraint!,
-            
-            // feedbackContainer constraints
-            feedbackContainer.leadingAnchor.constraint(equalTo: messageView.trailingAnchor, constant: 8),
-            feedbackContainer.widthAnchor.constraint(equalToConstant: 40),
-            feedbackToTimestampConstraint!,
-            
-            // thumbsUpButton constraints
-            thumbsUpButton.topAnchor.constraint(equalTo: feedbackContainer.topAnchor),
-            thumbsUpButton.leadingAnchor.constraint(equalTo: feedbackContainer.leadingAnchor),
-            thumbsUpButton.trailingAnchor.constraint(equalTo: feedbackContainer.trailingAnchor),
-            thumbsUpButton.widthAnchor.constraint(equalToConstant: 30),
-            thumbsUpButton.heightAnchor.constraint(equalToConstant: 30),
-            
-            // thumbsDownButton constraints
-            thumbsDownButton.topAnchor.constraint(equalTo: thumbsUpButton.bottomAnchor, constant: 8),
-            thumbsDownButton.leadingAnchor.constraint(equalTo: feedbackContainer.leadingAnchor),
-            thumbsDownButton.trailingAnchor.constraint(equalTo: feedbackContainer.trailingAnchor),
-            thumbsDownButton.widthAnchor.constraint(equalToConstant: 30),
-            thumbsDownButton.heightAnchor.constraint(equalToConstant: 30),
-            thumbsDownButton.bottomAnchor.constraint(equalTo: feedbackContainer.bottomAnchor),
-            
-            // timestampLabel constraints
-            timestampLabel.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
-            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
-        ])
-    }
-    
-    private func updateFeedbackUI() {
-        if feedbackProvided {
-            // If feedback was already provided, set the UI to the appropriate state
-            if feedbackWasPositive {
-                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup.fill"), for: .normal)
-                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
-                thumbsUpButton.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.2)
-                thumbsUpButton.tintColor = .systemBlue
-                thumbsDownButton.tintColor = .systemGray
-                // Set alpha to emphasize active button
-                thumbsUpButton.alpha = 1.0
-                thumbsDownButton.alpha = 0.5
-            } else {
-                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
-                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown.fill"), for: .normal)
-                thumbsDownButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.2)
-                thumbsUpButton.tintColor = .systemGray
-                thumbsDownButton.tintColor = .systemRed
-                // Set alpha to emphasize active button
-                thumbsUpButton.alpha = 0.5
-                thumbsDownButton.alpha = 1.0
-            }
-            // Ensure buttons are fully disabled
-            thumbsUpButton.isEnabled = false
-            thumbsDownButton.isEnabled = false
-        } else {
-            // Initial state when no feedback provided
-            thumbsUpButton.isEnabled = true
-            thumbsDownButton.isEnabled = true
-            thumbsUpButton.alpha = 1.0
-            thumbsDownButton.alpha = 1.0
-            thumbsUpButton.backgroundColor = UIColor.systemGray6
-            thumbsDownButton.backgroundColor = UIColor.systemGray6
-            thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
-            thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
-            thumbsUpButton.tintColor = .systemBlue
-            thumbsDownButton.tintColor = .systemGray
-        }
-    }
-    
-    func setFeedbackState(provided: Bool, wasPositive: Bool) {
-        self.feedbackProvided = provided
-        self.feedbackWasPositive = wasPositive
-        
-        // Log to verify this is being called
-        luLog(.info, "Setting feedback state for message ID: \(_messageId), provided: \(provided), wasPositive: \(wasPositive)")
-        
-        // Update UI first
-        updateFeedbackUI()
-        
-        // Ensure buttons are disabled visually as well (with more forceful settings)
-        if provided {
-            thumbsUpButton.isEnabled = false
-            thumbsDownButton.isEnabled = false
-            thumbsUpButton.alpha = wasPositive ? 1.0 : 0.5
-            thumbsDownButton.alpha = wasPositive ? 0.5 : 1.0
-            
-            // Apply additional visual state to ensure it sticks
-            if wasPositive {
-                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup.fill"), for: .normal)
-                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown"), for: .normal)
-                thumbsUpButton.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.2)
-                thumbsUpButton.tintColor = .systemBlue
-                thumbsDownButton.tintColor = .systemGray
-            } else {
-                thumbsUpButton.setImage(UIImage(systemName: "hand.thumbsup"), for: .normal)
-                thumbsDownButton.setImage(UIImage(systemName: "hand.thumbsdown.fill"), for: .normal)
-                thumbsDownButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.2)
-                thumbsUpButton.tintColor = .systemGray
-                thumbsDownButton.tintColor = .systemRed
-            }
-        }
-    }
-    
-    @objc private func handleThumbsUp() {
-        guard !_messageId.isEmpty else { return }
-        luLog(.info, "Thumbs up clicked for message ID: \(_messageId)")
-        
-        UIView.animate(withDuration: 0.2) {
-            self.feedbackProvided = true
-            self.feedbackWasPositive = true
-            self.updateFeedbackUI()
-        }
-        
-        feedbackDelegate?.didProvideFeedback(for: self._messageId, positive: true)
-    }
-    
-    @objc private func handleThumbsDown() {
-        guard !_messageId.isEmpty else { return }
-        luLog(.info, "Thumbs down clicked for message ID: \(_messageId)")
-        
-        UIView.animate(withDuration: 0.2) {
-            self.feedbackProvided = true
-            self.feedbackWasPositive = false
-            self.updateFeedbackUI()
-        }
-        
-        feedbackDelegate?.didProvideFeedback(for: self._messageId, positive: false)
-    }
-    
-    @objc private func handleFollowUpTap(_ sender: UIButton) {
-        guard let question = sender.titleLabel?.text else { return }
-        followUpDelegate?.didSelectFollowUpQuestion(question)
-    }
-    
-    private func setupFollowUpButtons(questions: [String]) {
-        // Remove any existing follow-up buttons
-        followUpContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        
-        guard !questions.isEmpty else { return }
-        
-        // Add up to 3 questions
-        for (index, question) in questions.prefix(3).enumerated() {
-            let button = UIButton(type: .system)
-            button.setTitle(question, for: .normal)
-            button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-            button.titleLabel?.numberOfLines = 0
-            button.titleLabel?.lineBreakMode = .byWordWrapping
-            button.setTitleColor(.systemBlue, for: .normal)
-            button.backgroundColor = UIColor.systemGray6
-            button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
-            button.layer.cornerRadius = 16
-            button.layer.borderWidth = 1
-            button.layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.3).cgColor
-            button.clipsToBounds = true
-            button.addTarget(self, action: #selector(handleFollowUpTap(_:)), for: .touchUpInside)
-            
-            // Add to vertical stack
-            followUpContainer.addArrangedSubview(button)
-            
-            // Set content hugging priority to ensure buttons expand to show full text
-            button.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-    }
-    
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        
-        // Deactivate potentially problematic constraints
-        messageToFollowUpConstraint?.isActive = false
-        followUpToFeedbackConstraint?.isActive = false
-        feedbackToTimestampConstraint?.isActive = false
-        
-        // Set all stored constraints to nil to ensure they're recreated properly
-        messageToFollowUpConstraint = nil
-        followUpToFeedbackConstraint = nil
-        feedbackToTimestampConstraint = nil
-        
-        // Remove all follow-up buttons
-        followUpContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        
-        // Reset feedback state
-        feedbackProvided = false
-        feedbackWasPositive = false
-        updateFeedbackUI()
-        
-        // Ensure all subviews are still in the correct hierarchy
-        if thumbsUpButton.superview != feedbackContainer {
-            thumbsUpButton.removeFromSuperview()
-            feedbackContainer.addSubview(thumbsUpButton)
-        }
-        
-        if thumbsDownButton.superview != feedbackContainer {
-            thumbsDownButton.removeFromSuperview()
-            feedbackContainer.addSubview(thumbsDownButton)
-        }
-        
-        // Ensure proper view hierarchy
-        if messageView.superview != contentView {
-            contentView.addSubview(messageView)
-        }
-        if followUpContainer.superview != contentView {
-            contentView.addSubview(followUpContainer)
-        }
-        if feedbackContainer.superview != contentView {
-            contentView.addSubview(feedbackContainer)
-        }
-        if timestampLabel.superview != contentView {
-            contentView.addSubview(timestampLabel)
-        }
-        
-        // Clear any other state
-        _messageId = ""
-        followUpDelegate = nil
-        feedbackDelegate = nil
-        
-        // Create new constraints if needed
-        if messageToFollowUpConstraint == nil {
-            messageToFollowUpConstraint = messageView.bottomAnchor.constraint(equalTo: followUpContainer.topAnchor, constant: -8)
-        }
-        if followUpToFeedbackConstraint == nil {
-            followUpToFeedbackConstraint = followUpContainer.bottomAnchor.constraint(equalTo: feedbackContainer.topAnchor, constant: -8)
-        }
-        if feedbackToTimestampConstraint == nil {
-            feedbackToTimestampConstraint = feedbackContainer.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2)
-        }
-        
-        // Reactivate constraints
-        messageToFollowUpConstraint?.isActive = true
-        followUpToFeedbackConstraint?.isActive = true
-        feedbackToTimestampConstraint?.isActive = true
-    }
-    
-    func configure(with message: LuChatMessage) {
-        // Set the text using BaseChatCell's messageTextView
-        messageTextView.text = message.content
-        _messageId = message.id
-        
-        // Reactivate constraints
-        messageToFollowUpConstraint?.isActive = true
-        followUpToFeedbackConstraint?.isActive = true
-        feedbackToTimestampConstraint?.isActive = true
-        
-        // Debug print to verify the message ID is set correctly
-        luLog(.info, "Configuring cell with message ID: \(message.id)")
-        
-        // Set up follow-up buttons
-        if let followUpQuestions = message.followUpQuestions, !followUpQuestions.isEmpty {
-            setupFollowUpButtons(questions: followUpQuestions)
-        } else {
-            // For initial implementation, create dummy follow-up questions
-            let dummyQuestions = [
-                "How do I beat this level?",
-                "What are the best power-ups?",
-                "Any hidden secrets or cheats?"
-            ]
-            setupFollowUpButtons(questions: dummyQuestions)
-        }
-        
-        // Set feedback state based on stored feedback (if available)
-        if let feedbackProvided = message.feedbackProvided,
-           let feedbackWasPositive = message.feedbackWasPositive,
-           feedbackProvided == true { // Explicit check to ensure we have valid feedback
-            self.feedbackProvided = true
-            self.feedbackWasPositive = feedbackWasPositive
-            luLog(.info, "Restored saved feedback state for message ID: \(message.id), was positive: \(feedbackWasPositive)")
-        } else {
-            // Reset feedback buttons to initial state if no feedback stored
-            self.feedbackProvided = false
-            self.feedbackWasPositive = false
-        }
-        
-        // Update the UI based on feedback state
-        updateFeedbackUI()
-        
-        // Format and set timestamp
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        timestampLabel.text = formatter.string(from: message.timestamp)
-    }
-}
-
-class SystemMessageCell: BaseChatCell {
-    static let reuseIdentifier = "SystemMessageCell"
-    
-    private let timestampLabel = UILabel()
-    
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        
-        messageView.backgroundColor = .tertiarySystemFill
-        messageTextView.textColor = .secondaryLabel // Adapts to light/dark mode
-        messageTextView.font = UIFont.systemFont(ofSize: 13) // Smaller text
-        
-        // Configure timestamp label
-        timestampLabel.translatesAutoresizingMaskIntoConstraints = false
-        timestampLabel.font = UIFont.systemFont(ofSize: 11)
-        timestampLabel.textColor = .secondaryLabel
-        timestampLabel.textAlignment = .center
-        contentView.addSubview(timestampLabel)
-        
-        NSLayoutConstraint.activate([
-            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
-            messageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.85),
-            messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
-            
-            timestampLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
-        ])
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    func configure(with message: LuChatMessage) {
-        messageTextView.text = message.content
-        
-        // Format and set timestamp
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        timestampLabel.text = formatter.string(from: message.timestamp)
     }
 }
 
@@ -1968,23 +1808,5 @@ private extension String {
         }
         
         return attributedString
-    }
-}
-
-// MARK: - Game Collection Utilities
-extension LuChatViewController {
-    /// Fetches all game collections from Core Data
-    private func fetchGameCollections() -> [GameCollection] {
-        let fetchRequest: NSFetchRequest<GameCollection> = GameCollection.fetchRequest()
-        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \GameCollection.index, ascending: true)]
-        
-        do {
-            let collections = try DatabaseManager.shared.viewContext.fetch(fetchRequest)
-            luLog(.info, "Fetched \(collections.count) game collections")
-            return collections
-        } catch {
-            luLog(.error, "Failed to fetch game collections: \(error.localizedDescription)")
-            return []
-        }
     }
 }
