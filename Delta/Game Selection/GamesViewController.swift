@@ -97,7 +97,11 @@ extension GamesViewController
     override func viewDidLoad()
     {
         super.viewDidLoad()
-        
+        // Add Lu button if the feature is enabled
+        if ExperimentalFeatures.shared.Lu.isEnabled {
+            // Set up method swizzling for Lu button
+            self.addLuButton()
+        }
         let faqButton = UIButton(type: .system)
         faqButton.addTarget(self, action: #selector(GamesViewController.openFAQ), for: .primaryActionTriggered)
         faqButton.setTitle(NSLocalizedString("Learn More…", comment: ""), for: .normal)

@@ -69,7 +69,8 @@ struct Settings
                         #keyPath(UserDefaults.pauseWhileInactive): true,
                         #keyPath(UserDefaults.supportsExternalDisplays): true,
                         #keyPath(UserDefaults.isQuickGesturesEnabled): true,
-                        Settings.preferredCoreSettingsKey(for: .ds): MelonDS.core.identifier] as [String : Any]
+                        Settings.preferredCoreSettingsKey(for: .ds): MelonDS.core.identifier,
+                        ExperimentalFeatures.shared.Lu.settingsKey.rawValue: true] as [String : Any]
         
         #if BETA
         defaults[ExperimentalFeatures.shared.showWhatsNew.settingsKey.rawValue] = true // Re-show What's New even if user previously saw it in 1.7b5

@@ -10,5 +10,9 @@
 	<integer>10</integer>
 	<key>LU_BASE_URL</key>
 	<string>https://api.lulabs.ai/delta</string>
+	<key>LU_BASE_URL_PROD</key>
+	<string>https://api.lulabs.ai/delta</string>
+	<key>LU_BASE_URL_STAGING</key>
+	<string>https://nvp7moi94d.execute-api.us-east-1.amazonaws.com/delta</string>
 </dict>
 </plist>

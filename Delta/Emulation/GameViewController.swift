@@ -383,6 +383,12 @@ extension GameViewController
     {
         super.viewDidLoad()
         
+        // Add Lu button if the feature is enabled
+        if ExperimentalFeatures.shared.Lu.isEnabled {
+            // Set up method swizzling for Lu button
+            self.addLuButton()
+        }
+        
         // Lays out self.gameView, so we can pin self.sustainButtonsContentView to it without resulting in a temporary "cannot satisfy constraints".
         self.view.layoutIfNeeded()
         

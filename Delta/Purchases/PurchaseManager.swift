@@ -67,6 +67,7 @@ extension PurchaseManager
     var isExperimentalFeaturesAvailable: Bool {
         #if BETA
         // Experimental features are always available in BETA version.
+        Logger.purchases.notice("All experimental features enabled by BETA build flag")
         return true
         #elseif LEGACY
         // Experimental features are NEVER available in LEGACY version.
