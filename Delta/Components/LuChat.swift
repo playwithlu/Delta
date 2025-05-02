@@ -1367,21 +1367,44 @@ class LuChatViewController: UIViewController {
         var attachments: [APIContext.Attachment]? = nil
         if includeAttachments && emulatorCore != nil && ExperimentalFeatures.shared.Lu.wrappedValue.supportsAttachments {
             var contextAttachments: [APIContext.Attachment] = []
+            
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
             let timestamp = dateFormatter.string(from: Date())
             
-            if let snapshot = emulatorCore?.videoManager.snapshot(),
-               let imageData = snapshot.pngData() {
-                let screenshotAttachment = APIContext.Attachment(
-                    type: "screenshot",
-                    content: imageData.base64EncodedString(),
-                    filename: "screen_\(timestamp).png"
-                )
-                contextAttachments.append(screenshotAttachment)
+            // Base max size for most systems
+            let baseMaxSize = 500 * 1024
+            
+            // Reduce max size by 30% for DS games due to their larger resolution
+            let isDS = game.type.rawValue == "ds"
+            let maxImageSize = isDS ? Int(Double(baseMaxSize) * 0.7) : baseMaxSize
+            
+            luLog(.info, "Using max screenshot size: \(maxImageSize) bytes for \(game.type.rawValue) game")
+            
+            if let snapshot = emulatorCore?.videoManager.snapshot() {
+                // Start with good quality based on system type
+                var compressionQuality: CGFloat = isDS ? 0.75 : 0.85
+                var imageData = snapshot.jpegData(compressionQuality: compressionQuality)
+                
+                // Progressively reduce quality until we're under the size limit
+                // This ensures we use the highest quality possible while staying under limit
+                while let data = imageData, data.count > maxImageSize, compressionQuality > 0.4 {
+                    compressionQuality -= 0.1
+                    imageData = snapshot.jpegData(compressionQuality: compressionQuality)
+                }
+                
+                if let finalImageData = imageData {
+                    let screenshotAttachment = APIContext.Attachment(
+                        type: "screenshot",
+                        content: finalImageData.base64EncodedString(),
+                        filename: "screen_\(timestamp).jpg"
+                    )
+                    contextAttachments.append(screenshotAttachment)
+                    luLog(.info, "Screenshot size: \(finalImageData.count) bytes with quality \(compressionQuality)")
+                }
             }
             
-            if ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData {
+            if ExperimentalFeatures.shared.Lu.wrappedValue.shareGameplayData && ExperimentalFeatures.shared.Lu.wrappedValue.supportsSavestates {
                 let temporaryDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
                 let tempSaveStateURL = temporaryDirectoryURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("deltasave")
                 luLog(.info, "Generating temporary save state at \(tempSaveStateURL.path)")
@@ -1404,6 +1427,7 @@ class LuChatViewController: UIViewController {
                     luLog(.error, "Failed to generate temporary save state: \(error.localizedDescription)")
                 }
             }
+            
             if !contextAttachments.isEmpty {
                 attachments = contextAttachments
             }
