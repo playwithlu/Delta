@@ -729,7 +729,7 @@ class LuChatViewController: UIViewController {
     
     private var placeholderText: String {
         return isGeneralChat ?
-        "Ask anything about Delta or games in general..." :
+        "Ask anything about Delta or games" :
         "Ask Lu about this game..."
     }
     
@@ -1242,7 +1242,7 @@ class LuChatViewController: UIViewController {
         
         let activeGameId = ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId
         if activeGameId.isEmpty {
-            showError("Failed to prepare your question")
+            showError("Failed to prepare your question.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
             resetInputUI()
             return
         }
@@ -1315,7 +1315,7 @@ class LuChatViewController: UIViewController {
             luLog(.info, "Request prepared successfully, about to send to '\(urlString)'")
         } catch {
             luLog(.error, "Failed to encode request: \(error.localizedDescription)")
-            showError("Failed to prepare your question")
+            showError("Failed to prepare your question.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
             resetInputUI()
             return
         }
@@ -1338,26 +1338,26 @@ class LuChatViewController: UIViewController {
                         
                         switch urlError.code {
                         case .timedOut:
-                            self.showError("Lu is taking longer than usual to respond. Please try again.")
+                            self.showError("Lu is taking longer than usual to respond. Please try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                         case .notConnectedToInternet:
-                            self.showError("No internet connection. Please check your connection and try again.")
+                            self.showError("No internet connection. Please check your connection and try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                         case .badURL:
-                            self.showError("Invalid URL format. Please contact support with this error.")
+                            self.showError("Invalid URL format.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                             luLog(.error, "Bad URL error - This could indicate an issue with the URL format or invalid characters.")
                         case .cannotFindHost, .cannotConnectToHost:
-                            self.showError("Cannot connect to Lu server. Please check your connection and try again.")
+                            self.showError("Cannot connect to Lu server. Please check your connection and try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                         default:
-                            self.showError("Unable to connect to Lu. Please try again later.")
+                            self.showError("Unable to connect to Lu. Please try again later.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                         }
                     } else {
-                        self.showError("An error occurred while connecting to Lu: \(error.localizedDescription)")
+                        self.showError("An error occurred while connecting to Lu: \(error.localizedDescription)\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     }
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     luLog(.error, "Invalid response type received - not an HTTP response")
-                    self.showError("Received an invalid response. Please try again.")
+                    self.showError("Received an invalid response. Please try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     return
                 }
                 
@@ -1389,7 +1389,7 @@ class LuChatViewController: UIViewController {
                     default:
                         errorMessage = "Lu encountered an error (HTTP \(httpResponse.statusCode)). Please try again later."
                     }
-                    self.showError(errorMessage)
+                    self.showError("\(errorMessage)\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     return
                 }
                 
@@ -1408,7 +1408,7 @@ class LuChatViewController: UIViewController {
                     if let responsePreview = String(data: data, encoding: .utf8)?.prefix(200) {
                         luLog(.error, "Response preview: \(responsePreview)...")
                     }
-                    self.showError("Failed to understand Lu's response. Please try again.")
+                    self.showError("Failed to understand Lu's response. Please try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                 }
             }
         }
@@ -1457,10 +1457,28 @@ class LuChatViewController: UIViewController {
     private func showError(_ message: String) {
         let errorMessage = LuChatMessage(
             type: .systemMessage,
-            content: "Error: \(message)\n\nIf this issue persists, reach us on Discord: https://discord.gg/2xzvv856"
+            content: message
         )
         conversation.addMessage(errorMessage)
+        
+        // Update the table view
         tableView.reloadData()
+        
+        // Find the index of the new message
+        if let index = conversation.messages.lastIndex(where: { $0.type == .systemMessage }) {
+            let indexPath = IndexPath(row: index, section: 0)
+            
+            // After the reload is complete, configure the cell for link detection
+            DispatchQueue.main.async {
+                if let cell = self.tableView.cellForRow(at: indexPath) as? SystemMessageCell {
+                    // Enable link detection specifically for this error cell
+                    cell.messageTextView.isSelectable = true
+                    cell.messageTextView.dataDetectorTypes = .link
+                    cell.messageTextView.tintColor = .systemBlue  // Make links blue
+                }
+            }
+        }
+        
         scrollToBottom(animated: true)
     }
     private func handleFeedback(for messageId: String, positive: Bool) {
@@ -1556,7 +1574,7 @@ class LuChatViewController: UIViewController {
             isHandlingSendFeedback = false
             navigationItem.rightBarButtonItem = nil
             setupNavigationBar()
-            showError("Failed to prepare feedback")
+            showError("Failed to prepare feedback.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
             return
         }
         
@@ -1569,12 +1587,12 @@ class LuChatViewController: UIViewController {
                 self.setupNavigationBar()
                 if let err = error {
                     luLog(.error, "Feedback network error: \(err.localizedDescription)")
-                    self.showError("Failed to send feedback. Please try again later.")
+                    self.showError("Failed to send feedback. Please try again later.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    self.showError("Received an invalid response. Please try again.")
+                    self.showError("Received an invalid response. Please try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     return
                 }
                 // Log response details to help diagnose the issue
@@ -1622,7 +1640,7 @@ class LuChatViewController: UIViewController {
                     self.scrollToBottom(animated: true)
                     return  // Explicitly return to prevent any further processing
                 } else {
-                    self.showError("Something went wrong while sharing your feedback with Lu.")
+                    self.showError("Something went wrong while sharing your feedback with Lu.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                 }
             }
         }
@@ -2396,31 +2414,66 @@ private enum APIConstants {
         return plist
     }()
     
-    static let baseURL: String = {
+    // This computed property is fine as is
+    static var currentEnvironment: LuEnvironment {
+        return ExperimentalFeatures.shared.Lu.wrappedValue.apiEnvironment
+    }
+    
+    // Change from static let with closure to computed property
+    static var baseURL: String {
+        // Choose the appropriate URL based on current environment
+        let urlKey: String
+        
+        switch currentEnvironment {
+        case .production:
+            urlKey = "LU_BASE_URL_PROD"
+        case .staging:
+            urlKey = "LU_BASE_URL_STAGING"
+        case .development:
+            urlKey = "LU_BASE_URL_DEV"
+        }
+        
+        // Try to get environment-specific URL first
+        if let envUrl = plist[urlKey] as? String, !envUrl.isEmpty {
+            return envUrl
+        }
+        
+        // Fall back to default URL if specific one isn't found
         guard let url = plist["LU_BASE_URL"] as? String else {
             fatalError("[Lu] Missing LU_BASE_URL in Lu-Info.plist")
         }
+        
         return url
-    }()
-    static let askBaseURL = "\(baseURL)/ask"
-    static let supportBaseURL = "\(baseURL)/check-rom"
-    static let feedbackBaseURL = "\(baseURL)/feedbacks"
-    static let followUpBaseURL = "\(baseURL)/sessions/{session-id}/follow-ups"
+    }
     
+    // Change from constant to computed property
+    static var supportBaseURL: String {
+        return "\(baseURL)/check-rom"
+    }
+    // Change from constant to computed property
+    static var askBaseURL: String {
+        return "\(baseURL)/ask"
+    }
+    // Change from constant to computed property
+    static var feedbackBaseURL: String {
+        return "\(baseURL)/feedbacks"
+    }
+    // Change from constant to computed property
+    static var followUpBaseURL: String {
+        return "\(baseURL)/sessions/{session-id}/follow-ups"
+    }
     static let supportTimeout: TimeInterval = {
         guard let timeout = plist["SUPPORT_TIMEOUT"] as? TimeInterval else {
             return 10
         }
         return timeout
     }()
-    
     static let askTimeout: TimeInterval = {
         guard let timeout = plist["ASK_TIMEOUT"] as? TimeInterval else {
             return 30
         }
         return timeout
     }()
-    
     static let feedbackTimeout: TimeInterval = {
         guard let timeout = plist["FEEDBACK_TIMEOUT"] as? TimeInterval else {
             return 10

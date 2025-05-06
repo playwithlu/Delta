@@ -140,31 +140,66 @@ private enum APIConstants {
         return plist
     }()
     
-    static let baseURL: String = {
+    // This computed property is fine as is
+    static var currentEnvironment: LuEnvironment {
+        return ExperimentalFeatures.shared.Lu.wrappedValue.apiEnvironment
+    }
+    
+    // Change from static let with closure to computed property
+    static var baseURL: String {
+        // Choose the appropriate URL based on current environment
+        let urlKey: String
+        
+        switch currentEnvironment {
+        case .production:
+            urlKey = "LU_BASE_URL_PROD"
+        case .staging:
+            urlKey = "LU_BASE_URL_STAGING"
+        case .development:
+            urlKey = "LU_BASE_URL_DEV"
+        }
+        
+        // Try to get environment-specific URL first
+        if let envUrl = plist[urlKey] as? String, !envUrl.isEmpty {
+            return envUrl
+        }
+        
+        // Fall back to default URL if specific one isn't found
         guard let url = plist["LU_BASE_URL"] as? String else {
             fatalError("[Lu] Missing LU_BASE_URL in Lu-Info.plist")
         }
+        
         return url
-    }()
+    }
     
-    static let askBaseURL = "\(baseURL)/ask"
-    static let supportBaseURL = "\(baseURL)/check-rom"
-    static let feedbackBaseURL = "\(baseURL)/feedbacks"
-    
+    // Change from constant to computed property
+    static var supportBaseURL: String {
+        return "\(baseURL)/check-rom"
+    }
+    // Change from constant to computed property
+    static var askBaseURL: String {
+        return "\(baseURL)/ask"
+    }
+    // Change from constant to computed property
+    static var feedbackBaseURL: String {
+        return "\(baseURL)/feedbacks"
+    }
+    // Change from constant to computed property
+    static var followUpBaseURL: String {
+        return "\(baseURL)/sessions/{session-id}/follow-ups"
+    }
     static let supportTimeout: TimeInterval = {
         guard let timeout = plist["SUPPORT_TIMEOUT"] as? TimeInterval else {
             return 10
         }
         return timeout
     }()
-    
     static let askTimeout: TimeInterval = {
         guard let timeout = plist["ASK_TIMEOUT"] as? TimeInterval else {
             return 30
         }
         return timeout
     }()
-    
     static let feedbackTimeout: TimeInterval = {
         guard let timeout = plist["FEEDBACK_TIMEOUT"] as? TimeInterval else {
             return 10
@@ -446,7 +481,7 @@ extension PauseViewController {
         let request = LuRequest(
             game_id: activeGameId,
             question: question, sha1: game.identifier.uppercased(),
-            remember_conversation: ExperimentalFeatures.shared.Lu.wrappedValue.rememberConversations,
+            remember_conversation: true,
             attachments: context.attachments
         )
 
@@ -487,7 +522,7 @@ extension PauseViewController {
                 var requestInfo: [String: Any] = [
                     "game_id": activeGameId,
                     "question": question,
-                    "remember_conversation": ExperimentalFeatures.shared.Lu.wrappedValue.rememberConversations
+                    "remember_conversation": true
                 ]
 
                 if let attachments = context.attachments {
@@ -528,7 +563,7 @@ extension PauseViewController {
 
 
 
-        luLog(.info, "Making request to URL: \(urlString). Options : Remember Conversation(\(ExperimentalFeatures.shared.Lu.wrappedValue.rememberConversations)), Share Gameplay Data(\(shouldIncludeAttachments))")
+        luLog(.info, "Making request to URL: \(urlString). Options : Remember Conversation(\(true)), Share Gameplay Data(\(shouldIncludeAttachments))")
         
         let task = URLSession.shared.dataTask(with: urlRequest) { [weak self] (data, response, error) in
             DispatchQueue.main.async {
@@ -576,10 +611,6 @@ extension PauseViewController {
         
         \(response.answer)
         """
-        
-        if ExperimentalFeatures.shared.Lu.wrappedValue.rememberConversations {
-            messageText += "\n\n(Conversation will be remembered for this game)"
-        }
         
         let responseAlert = UIAlertController(
             title: NSLocalizedString("Lu's Response", comment: ""),

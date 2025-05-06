@@ -100,17 +100,68 @@ private enum APIConstants {
         return plist
     }()
     
-    static let baseURL: String = {
+    // This computed property is fine as is
+    static var currentEnvironment: LuEnvironment {
+        return ExperimentalFeatures.shared.Lu.wrappedValue.apiEnvironment
+    }
+    
+    // Change from static let with closure to computed property
+    static var baseURL: String {
+        // Choose the appropriate URL based on current environment
+        let urlKey: String
+        
+        switch currentEnvironment {
+        case .production:
+            urlKey = "LU_BASE_URL_PROD"
+        case .staging:
+            urlKey = "LU_BASE_URL_STAGING"
+        case .development:
+            urlKey = "LU_BASE_URL_DEV"
+        }
+        
+        // Try to get environment-specific URL first
+        if let envUrl = plist[urlKey] as? String, !envUrl.isEmpty {
+            return envUrl
+        }
+        
+        // Fall back to default URL if specific one isn't found
         guard let url = plist["LU_BASE_URL"] as? String else {
             fatalError("[Lu] Missing LU_BASE_URL in Lu-Info.plist")
         }
+        
         return url
-    }()
+    }
     
-    static let supportBaseURL = "\(baseURL)/check-rom"
-    
+    // Change from constant to computed property
+    static var supportBaseURL: String {
+        return "\(baseURL)/check-rom"
+    }
+    // Change from constant to computed property
+    static var askBaseURL: String {
+        return "\(baseURL)/ask"
+    }
+    // Change from constant to computed property
+    static var feedbackBaseURL: String {
+        return "\(baseURL)/feedbacks"
+    }
+    // Change from constant to computed property
+    static var followUpBaseURL: String {
+        return "\(baseURL)/sessions/{session-id}/follow-ups"
+    }
     static let supportTimeout: TimeInterval = {
         guard let timeout = plist["SUPPORT_TIMEOUT"] as? TimeInterval else {
+            return 10
+        }
+        return timeout
+    }()
+    static let askTimeout: TimeInterval = {
+        guard let timeout = plist["ASK_TIMEOUT"] as? TimeInterval else {
+            return 30
+        }
+        return timeout
+    }()
+    static let feedbackTimeout: TimeInterval = {
+        guard let timeout = plist["FEEDBACK_TIMEOUT"] as? TimeInterval else {
             return 10
         }
         return timeout
@@ -210,6 +261,7 @@ protocol SpeechManagerDelegate: AnyObject {
     /// Called when authorization status changes
     func speechRecognition(authorizationDidChange status: SFSpeechRecognizerAuthorizationStatus)
 }
+
 // Define our own speech recognition manager interface if needed
 class SpeechManager: NSObject, SFSpeechRecognizerDelegate {
     static let shared = SpeechManager()
@@ -224,6 +276,9 @@ class SpeechManager: NSObject, SFSpeechRecognizerDelegate {
     private var audioEngine: AVAudioEngine = AVAudioEngine()
     private var hasReceivedPartialResults: Bool = false
     public var isListening: Bool = false
+    
+    // Track the last recognized partial result
+    private var lastPartialResult: String = ""
     
     // Initialize with a default locale
     override init() {
@@ -297,9 +352,6 @@ class SpeechManager: NSObject, SFSpeechRecognizerDelegate {
             }
         }
     }
-    
-    // Track the last recognized partial result
-    private var lastPartialResult: String = ""
     
     func stopListening() {
         // Check if we have partial results but no final result was processed
@@ -1386,20 +1438,15 @@ extension GameViewController {
             label.textColor = .white
             label.font = UIFont.boldSystemFont(ofSize: 16)
             label.textAlignment = .center
-            label.backgroundColor = UIColor.black.withAlphaComponent(0.7)
-            label.layer.cornerRadius = 10
-            label.clipsToBounds = true
-            label.alpha = 0
+            label.backgroundColor = .clear
+            label.numberOfLines = 0 // Allow multiple lines
             
-            // Add padding using a container view instead of custom properties
+            // Add padding using a container view
             let containerView = UIView()
             containerView.translatesAutoresizingMaskIntoConstraints = false
             containerView.backgroundColor = UIColor.black.withAlphaComponent(0.7)
             containerView.layer.cornerRadius = 10
             containerView.clipsToBounds = true
-            
-            // Remove label background and corner radius since container handles it
-            label.backgroundColor = .clear
             
             // Add label to container
             view.addSubview(containerView)
@@ -1412,6 +1459,9 @@ extension GameViewController {
                 label.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
                 label.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -4),
                 
+                // Fixed width constraint - adjust the value as needed
+                containerView.widthAnchor.constraint(equalToConstant: 260),
+                
                 containerView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
                 containerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20)
             ])
@@ -1422,7 +1472,7 @@ extension GameViewController {
         // Show with animation
         UIView.animate(withDuration: 0.3) {
             self.listeningIndicatorView?.alpha = 1.0
-            self.listeningLabel?.alpha = 1.0
+            self.listeningLabel?.superview?.alpha = 1.0
             
             // Start pulsing animation
             self.startPulseAnimation()
@@ -1433,11 +1483,20 @@ extension GameViewController {
     }
     
     private func hideListeningIndicator() {
+        // Store references to the views before animation
+        let indicatorView = self.listeningIndicatorView
+        let labelContainer = self.listeningLabel?.superview
+        
         UIView.animate(withDuration: 0.3, animations: {
-            self.listeningIndicatorView?.alpha = 0
-            self.listeningLabel?.alpha = 0
+            indicatorView?.alpha = 0
+            labelContainer?.alpha = 0 // Animate the container
             self.luButton?.alpha = 1.0
         }) { _ in
+            // After animation completes, remove the views from the hierarchy
+            indicatorView?.removeFromSuperview()
+            labelContainer?.removeFromSuperview()
+            self.listeningIndicatorView = nil
+            self.listeningLabel = nil
             self.stopPulseAnimation()
         }
     }
@@ -1507,7 +1566,6 @@ extension GameViewController {
         
         self.present(alert, animated: true)
     }
-    
     
     // MARK: - Background API and TTS methods
     
@@ -1586,27 +1644,27 @@ extension GameViewController {
             luLog(.error, "❌ Failed to configure audio session: \(error.localizedDescription)")
         }
         
-    // Create a hidden instance of LuChatViewController
-    let chatVC = LuChatViewController(game: game, emulatorCore: self.emulatorCore)
-    
-    // Add completion handler with stronger reference to self to ensure it's not deallocated
-    chatVC.onSpeechFinished = { [self] in
-        DispatchQueue.main.async {
-            // Reset Lu button state to idle when speech is finished
-            self.luButtonState = .idle
-            luLog(.info, "🔔 Speech finished naturally - resetting Lu button state to idle")
+        // Create a hidden instance of LuChatViewController
+        let chatVC = LuChatViewController(game: game, emulatorCore: self.emulatorCore)
+        
+        // Add completion handler with stronger reference to self to ensure it's not deallocated
+        chatVC.onSpeechFinished = { [self] in
+            DispatchQueue.main.async {
+                // Reset Lu button state to idle when speech is finished
+                self.luButtonState = .idle
+                luLog(.info, "🔔 Speech finished naturally - resetting Lu button state to idle")
+            }
         }
-    }
-    
-    // Create a dummy LuResponseCell to use with the speech function
-    // This is necessary because the speak method requires a cell parameter
-    let dummyCell = LuResponseCell(style: .default, reuseIdentifier: "DummyCell")
-    
-    // Actually initiate the speech synthesis with the message text
-    chatVC.speak(messageText: text, for: dummyCell)
-    
-    // Store reference to ensure it's not deallocated too early
-    self.hiddenChatVC = chatVC
+        
+        // Create a dummy LuResponseCell to use with the speech function
+        // This is necessary because the speak method requires a cell parameter
+        let dummyCell = LuResponseCell(style: .default, reuseIdentifier: "DummyCell")
+        
+        // Actually initiate the speech synthesis with the message text
+        chatVC.speak(messageText: text, for: dummyCell)
+        
+        // Store reference to ensure it's not deallocated too early
+        self.hiddenChatVC = chatVC
     }
     
     // Stop TTS playback when button is tapped during playing state
@@ -1640,7 +1698,7 @@ extension GameViewController {
         
         // Get API URL and setup parameters
         let activeGameId = ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId
-        let urlString = "\(APIConstants.baseURL)/ask"
+        let urlString = "\(APIConstants.askBaseURL)"
         guard let url = URL(string: urlString) else {
             completion(false, nil)
             return
@@ -1727,48 +1785,28 @@ extension GameViewController {
                         let refreshedConversation = luChatManager.getOrCreateConversation(gameId: game.identifier, gameName: game.name)
                         luLog(.info, "💬 Conversation now has \(refreshedConversation.messages.count) messages after adding Lu response")
                         
-                        do {
-                            let luResponse = try JSONDecoder().decode(LuResponse.self, from: data)
-                            luLog(.info, "✅ Successfully decoded Lu response with message_id: \(luResponse.message_id)")
+                        // NEW: Manually update with follow-up questions right here
+                        // This ensures follow-up questions are added immediately after the response
+                        // instead of relying on a separate API call
+                        if let lastIndex = refreshedConversation.messages.lastIndex(where: { $0.type == .luResponse }) {
+                            var updatedMessage = refreshedConversation.messages[lastIndex]
                             
-                            // Important: Create Lu response message with the correct ID from the API
-                            let responseMessage = LuChatMessage(
-                                id: luResponse.message_id,
-                                type: .luResponse,
-                                content: luResponse.answer
-                            )
+                            // Use dummy questions directly
+                            let dummyQuestions = [
+                                "How do I beat this level?",
+                                "What are the best power-ups?",
+                                "Any hidden secrets or cheats?"
+                            ]
                             
-                            // Add to conversation and save immediately
-                            conversation.addMessage(responseMessage)
+                            luLog(.info, "📋 Manually adding \(dummyQuestions.count) follow-up questions to message ID: \(updatedMessage.id)")
+                            updatedMessage.followUpQuestions = dummyQuestions
+                            refreshedConversation.messages[lastIndex] = updatedMessage
+                            
+                            // Save changes
                             luChatManager.saveConversations()
-                            
-                            // Verify the conversation has been updated
-                            let refreshedConversation = luChatManager.getOrCreateConversation(gameId: game.identifier, gameName: game.name)
-                            luLog(.info, "💬 Conversation now has \(refreshedConversation.messages.count) messages after adding Lu response")
-                            
-                            // NEW: Manually update with follow-up questions right here
-                            // This ensures follow-up questions are added immediately after the response
-                            // instead of relying on a separate API call
-                            if let lastIndex = refreshedConversation.messages.lastIndex(where: { $0.type == .luResponse }) {
-                                var updatedMessage = refreshedConversation.messages[lastIndex]
-                                
-                                // Use dummy questions directly
-                                let dummyQuestions = [
-                                    "How do I beat this level?",
-                                    "What are the best power-ups?",
-                                    "Any hidden secrets or cheats?"
-                                ]
-                                
-                                luLog(.info, "📋 Manually adding \(dummyQuestions.count) follow-up questions to message ID: \(updatedMessage.id)")
-                                updatedMessage.followUpQuestions = dummyQuestions
-                                refreshedConversation.messages[lastIndex] = updatedMessage
-                                
-                                // Save changes
-                                luChatManager.saveConversations()
-                                luLog(.info, "💾 Saved conversation with follow-up questions")
-                            } else {
-                                luLog(.error, "⚠️ Could not find last response message to add follow-up questions")
-                            }
+                            luLog(.info, "💾 Saved conversation with follow-up questions")
+                        } else {
+                            luLog(.error, "⚠️ Could not find last response message to add follow-up questions")
                         }
                         
                         // Return the answer through completion handler
@@ -1975,7 +2013,6 @@ extension GamesViewController {
         dummyGame.identifier = hardcodedGameId
         
         // Get all available games to provide metadata for save states
-
         let allGames = Game.instancesWithPredicate(
             NSPredicate(value: true),  // Predicate that matches all games
             inManagedObjectContext: DatabaseManager.shared.viewContext,

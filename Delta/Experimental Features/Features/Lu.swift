@@ -93,6 +93,23 @@ extension VoiceType: CustomStringConvertible, LocalizedOptionValue {
     }
 }
 
+enum LuEnvironment: String, CaseIterable, LocalizedOptionValue {
+    case production
+    case staging
+    case development
+    
+    var localizedDescription: Text {
+        switch self {
+        case .production:
+            return Text("Production")
+        case .staging:
+            return Text("Staging")
+        case .development:
+            return Text("Development")
+        }
+    }
+}
+
 struct PlayWithLuOptions {
     // Hidden option to track if welcome message was shown
     @Option
@@ -120,9 +137,10 @@ struct PlayWithLuOptions {
             """)
     var shareGameplayData: Bool = false
     
-    @Option(name: "Remember Conversations",
-            description: "Lu can save your previous questions and responses to provide context-aware advice and follow-up suggestions for each game.")
-    var rememberConversations: Bool = false
+    @Option(name: "API Environment",
+            description: "Choose which API environment to use for testing Lu.",
+            values: LuEnvironment.allCases)
+    var apiEnvironment: LuEnvironment = .production
     
     @Option(name: "Voice Interaction",
             description: "Enable long-press on the Lu button to activate speech recognition. You can speak your questions and Lu will read the answers back to you.")
