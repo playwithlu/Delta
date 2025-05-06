@@ -10,8 +10,7 @@ import UIKit
 import DeltaFeatures
 import DeltaCore
 import os.log
-
-// MARK: - Logging
+import AVFoundation
 
 private extension OSLog {
     static let lu = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "com.rileytestut.Delta", category: "Lu")
@@ -19,6 +18,14 @@ private extension OSLog {
 
 private func luLog(_ type: OSLogType = .info, _ message: String) {
     os_log("[Lu] %{public}@", log: .lu, type: type, message)
+}
+
+// MARK: - Extensions for constraint handling
+extension NSLayoutConstraint {
+    func with(priority: UILayoutPriority) -> NSLayoutConstraint {
+        self.priority = priority
+        return self
+    }
 }
 
 // MARK: - Data Models
@@ -97,7 +104,7 @@ class LuChatConversation: Codable {
          createdAt: Date = Date(),
          updatedAt: Date = Date()) {
         self.id = id
-        self.gameId = gameId
+        self.gameId = gameId.lowercased() // Always lowercase gameId for consistency
         self.gameName = gameName
         self.messages = messages
         self.createdAt = createdAt
@@ -107,6 +114,7 @@ class LuChatConversation: Codable {
     func addMessage(_ message: LuChatMessage) {
         messages.append(message)
         updatedAt = Date()
+        luLog(.info, "Added message ID: \(message.id) to conversation \(id), now has \(messages.count) messages")
     }
 }
 
@@ -123,27 +131,32 @@ class LuChatManager {
     }
 
     func getOrCreateConversation(gameId: String, gameName: String) -> LuChatConversation {
-        if let conversation = conversations[gameId] {
+        // IMPORTANT FIX: Always load conversations before checking to ensure we have fresh data
+        loadConversations()
+        
+        if let conversation = conversations[gameId.lowercased()] {
             activeConversation = conversation
+            luLog(.info, "Retrieved conversation for gameId: \(gameId) with \(conversation.messages.count) messages")
             return conversation
         } else {
-            let newConversation = LuChatConversation(gameId: gameId, gameName: gameName)
-            conversations[gameId] = newConversation
+            let newConversation = LuChatConversation(gameId: gameId.lowercased(), gameName: gameName)
+            conversations[gameId.lowercased()] = newConversation
             activeConversation = newConversation
             saveConversations()
+            luLog(.info, "Created new conversation for gameId: \(gameId)")
             return newConversation
         }
     }
 
     func addMessage(_ message: LuChatMessage, toConversation conversationId: String) {
-        guard let conversation = conversations[conversationId] else { return }
+        guard let conversation = conversations[conversationId.lowercased()] else { return }
         conversation.addMessage(message)
         saveConversations()
     }
 
     func clearConversation(gameId: String) {
-        conversations.removeValue(forKey: gameId)
-        if activeConversation?.gameId == gameId {
+        conversations.removeValue(forKey: gameId.lowercased())
+        if activeConversation?.gameId.lowercased() == gameId.lowercased() {
             activeConversation = nil
         }
         saveConversations()
@@ -159,19 +172,29 @@ class LuChatManager {
         do {
             let data = try JSONEncoder().encode(conversations)
             UserDefaults.standard.set(data, forKey: conversationsKey)
+            luLog(.info, "Saved \(conversations.count) conversations with a total of \(totalMessages()) messages")
         } catch {
             luLog(.error, "Failed to save Lu conversations: \(error.localizedDescription)")
         }
     }
 
-    private func loadConversations() {
-        guard let data = UserDefaults.standard.data(forKey: conversationsKey) else { return }
+    func loadConversations() {
+        guard let data = UserDefaults.standard.data(forKey: conversationsKey) else {
+            luLog(.info, "No saved conversation data found in UserDefaults")
+            return
+        }
 
         do {
             conversations = try JSONDecoder().decode([String: LuChatConversation].self, from: data)
+            luLog(.info, "Loaded \(conversations.count) conversations with a total of \(totalMessages()) messages")
         } catch {
             luLog(.error, "Failed to load Lu conversations: \(error.localizedDescription)")
         }
+    }
+    
+    // Helper to log total messages across all conversations
+    private func totalMessages() -> Int {
+        return conversations.values.reduce(0) { $0 + $1.messages.count }
     }
 }
 
@@ -185,14 +208,14 @@ class BaseChatCell: UITableViewCell {
         
         selectionStyle = .none
         backgroundColor = .clear
-        backgroundColor = .clear
         contentView.backgroundColor = .clear
         contentView.isUserInteractionEnabled = true
         
         messageView.translatesAutoresizingMaskIntoConstraints = false
-        messageView.layer.cornerRadius = 12 // Standard chat bubble corner radius
+        messageView.layer.cornerRadius = 12
         messageView.clipsToBounds = true
         contentView.addSubview(messageView)
+        
         messageTextView.translatesAutoresizingMaskIntoConstraints = false
         messageTextView.font = UIFont.preferredFont(forTextStyle: .body)
         messageTextView.adjustsFontForContentSizeCategory = true
@@ -202,9 +225,22 @@ class BaseChatCell: UITableViewCell {
         messageTextView.backgroundColor = .clear
         messageTextView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         messageTextView.textContainer.lineFragmentPadding = 0
-        messageTextView.dataDetectorTypes = [.link, .phoneNumber]
-        messageTextView.isUserInteractionEnabled = true
+        messageTextView.textContainer.maximumNumberOfLines = 0
+        messageTextView.textContainer.lineBreakMode = .byWordWrapping
+        
+        // Important: Force text view to wrap text within its bounds 
+        // rather than expanding horizontally
+        messageTextView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        messageTextView.setContentHuggingPriority(.required, for: .horizontal)
+        
+        // Add messageTextView to messageView to ensure proper view hierarchy
         messageView.addSubview(messageTextView)
+        
+        // Set content hugging and compression resistance priorities
+        messageTextView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        messageTextView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        messageTextView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        messageTextView.setContentCompressionResistancePriority(.required, for: .vertical)
         
         NSLayoutConstraint.activate([
             // Only set up messageTextView constraints in the base class
@@ -215,8 +251,15 @@ class BaseChatCell: UITableViewCell {
             messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor)
         ])
     }
+    
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        // Reset content text
+        messageTextView.text = nil
     }
 }
 
@@ -238,12 +281,16 @@ class UserMessageCell: BaseChatCell {
         timestampLabel.textAlignment = .right
         contentView.addSubview(timestampLabel)
         
+        // Fixed width constraints - Use priority to fix constraint conflicts
         NSLayoutConstraint.activate([
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
+            // Use a higher priority constraint for leading to prevent width conflicts
+            messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60).with(priority: .defaultHigh),
             messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75),
+            
+            // Use a lower priority for the width constraint
+            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75).with(priority: .defaultHigh - 1),
             
             timestampLabel.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
             timestampLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
@@ -255,6 +302,11 @@ class UserMessageCell: BaseChatCell {
         fatalError("init(coder:) has not been implemented")
     }
     
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        timestampLabel.text = nil
+    }
+    
     func configure(with message: LuChatMessage) {
         messageTextView.text = message.content
         
@@ -263,6 +315,10 @@ class UserMessageCell: BaseChatCell {
         formatter.dateStyle = .none
         formatter.timeStyle = .short
         timestampLabel.text = formatter.string(from: message.timestamp)
+        
+        // Force layout update
+        setNeedsLayout()
+        layoutIfNeeded()
     }
 }
 
@@ -277,6 +333,7 @@ class LuResponseCell: BaseChatCell {
     private var _messageId: String = ""
     private var feedbackProvided: Bool = false
     private var feedbackWasPositive: Bool = false
+    private var isSpeaking: Bool = false
     
     var messageId: String {
         return _messageId
@@ -331,28 +388,49 @@ class LuResponseCell: BaseChatCell {
     }
     
     private func setupConstraints() {
+        // Fix constraint conflicts by using appropriate priorities
         NSLayoutConstraint.activate([
-            // messageView constraints
+            // Fix width constraints for message view
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            messageView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -60),
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75),
-            messageView.bottomAnchor.constraint(equalTo: followUpContainer.topAnchor, constant: -8),
+            // Set a FIXED width constraint (not lessThanOrEqual) to ensure message width doesn't expand with content
+            messageView.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.75).with(priority: .required - 1),
+            // Remove trailing constraint as it can conflict with fixed width and allow horizontal expansion
+            // Instead, ensure the messageView is positioned properly with leading constraint only
+            // Add a bottom constraint to properly limit the messageView expansion
+            messageView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -40).with(priority: .defaultHigh),
             
-            // followUpContainer constraints
-            followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
-            followUpContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -12),
-            followUpContainer.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -8),
-            
-            // timestampLabel constraints
+            // timestampLabel constraints - positioned below followUpContainer
+            timestampLabel.topAnchor.constraint(equalTo: followUpContainer.bottomAnchor, constant: 4),
             timestampLabel.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
             timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+        ])
+        
+        // Set up followUpContainer constraints separately with appropriate priorities
+        // to avoid conflicts during initial layout when contentView might have a temporary width
+        NSLayoutConstraint.activate([
+            // Vertical position - high priority
+            followUpContainer.topAnchor.constraint(equalTo: messageView.bottomAnchor, constant: 8).with(priority: .required),
+            
+            // Leading constraint - high priority
+            followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor).with(priority: .defaultHigh),
+            
+            // Width constraints - use lower priority to avoid conflicts during initial layout
+            followUpContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -12).with(priority: .defaultHigh - 1),
+            
+            // Ensure stackView has a valid minimum width even during initial layout
+            followUpContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 0).with(priority: .required)
         ])
     }
     
     @objc private func handleFollowUpTap(_ sender: UIButton) {
         guard let question = sender.titleLabel?.text else { return }
         followUpDelegate?.didSelectFollowUpQuestion(question)
+    }
+    
+    func updateSpeakingState(isSpeaking: Bool) {
+        self.isSpeaking = isSpeaking
+        // You could add visual feedback here if needed
     }
     
     private func setupFollowUpButtons(questions: [String]) {
@@ -396,31 +474,53 @@ class LuResponseCell: BaseChatCell {
         feedbackProvided = false
         feedbackWasPositive = false
         
+        // Reset speech state
+        isSpeaking = false
+        updateSpeakingState(isSpeaking: false)
+        
         // Clear any other state
         _messageId = ""
         followUpDelegate = nil
         feedbackDelegate = nil
     }
     
-    func configure(with message: LuChatMessage) {
+    func configure(with message: LuChatMessage, isLastAssistantMessage: Bool = false) {
         // Set the text using BaseChatCell's messageTextView
         messageTextView.text = message.content
+        
+        // Set preferred width for the text container to ensure proper text wrapping
+        let preferredWidth = contentView.bounds.width * 0.7
+        
+        // Set the text container's maximum width but don't allow expanding beyond that
+        messageTextView.textContainer.size = CGSize(width: preferredWidth, height: CGFloat.greatestFiniteMagnitude)
+        
+        // Crucial: Set these priorities properly to ensure horizontal compression
+        // This forces the text to wrap rather than expanding horizontally
+        messageTextView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        messageTextView.setContentHuggingPriority(.required, for: .horizontal)
+        
+        // Set similar priorities on the containing messageView
+        messageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        messageView.setContentHuggingPriority(.required, for: .horizontal)
+        
+        // Force the text view to prefer wrapping
+        messageTextView.textContainer.maximumNumberOfLines = 0
+        messageTextView.textContainer.lineBreakMode = .byWordWrapping
+        
+        // Force layout update
+        messageTextView.setNeedsLayout()
+        messageTextView.layoutIfNeeded()
+        
         _messageId = message.id
         
-        // Debug print to verify the message ID is set correctly
-        luLog(.info, "Configuring cell with message ID: \(message.id)")
-        
-        // Set up follow-up buttons
-        if let followUpQuestions = message.followUpQuestions, !followUpQuestions.isEmpty {
-            setupFollowUpButtons(questions: followUpQuestions)
+        // Set up follow-up buttons only if this is the last assistant message
+        if isLastAssistantMessage {
+            if let followUpQuestions = message.followUpQuestions, !followUpQuestions.isEmpty {
+                setupFollowUpButtons(questions: followUpQuestions)
+            }
         } else {
-            // For initial implementation, create dummy follow-up questions
-            let dummyQuestions = [
-                "How do I beat this level?",
-                "What are the best power-ups?",
-                "Any hidden secrets or cheats?"
-            ]
-            setupFollowUpButtons(questions: dummyQuestions)
+            // Clear any follow-up buttons for non-last messages
+            followUpContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
         }
         
         // Store feedback state
@@ -429,7 +529,6 @@ class LuResponseCell: BaseChatCell {
            feedbackProvided == true {
             self.feedbackProvided = true
             self.feedbackWasPositive = feedbackWasPositive
-            luLog(.info, "Restored saved feedback state for message ID: \(message.id), was positive: \(feedbackWasPositive)")
         } else {
             self.feedbackProvided = false
             self.feedbackWasPositive = false
@@ -440,13 +539,15 @@ class LuResponseCell: BaseChatCell {
         formatter.dateStyle = .none
         formatter.timeStyle = .short
         timestampLabel.text = formatter.string(from: message.timestamp)
+        
+        // At the end of configuration, ensure layout is refreshed
+        setNeedsLayout()
+        layoutIfNeeded()
     }
 }
 
 class SystemMessageCell: BaseChatCell {
     static let reuseIdentifier = "SystemMessageCell"
-    
-    private let timestampLabel = UILabel()
     
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -455,22 +556,21 @@ class SystemMessageCell: BaseChatCell {
         messageTextView.textColor = .secondaryLabel // Adapts to light/dark mode
         messageTextView.font = UIFont.systemFont(ofSize: 13) // Smaller text
         
-        // Configure timestamp label
-        timestampLabel.translatesAutoresizingMaskIntoConstraints = false
-        timestampLabel.font = UIFont.systemFont(ofSize: 11)
-        timestampLabel.textColor = .secondaryLabel
-        timestampLabel.textAlignment = .center
-        contentView.addSubview(timestampLabel)
+        // Center align the text
+       messageTextView.textAlignment = .center
         
         NSLayoutConstraint.activate([
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.85),
-            messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
-            
-            timestampLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+            // Add proper fixed width with required priority
+            messageView.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.85).with(priority: .required - 1),
+            // Force horizontal compression to ensure text wrapping
+            messageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4)
         ])
+        
+        // Force text wrapping by setting content compression resistance priority
+        messageTextView.setContentCompressionResistancePriority(.required, for: .vertical)
+        messageTextView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
     
     required init?(coder: NSCoder) {
@@ -480,22 +580,27 @@ class SystemMessageCell: BaseChatCell {
     func configure(with message: LuChatMessage) {
         messageTextView.text = message.content
         
-        // Format and set timestamp
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        timestampLabel.text = formatter.string(from: message.timestamp)
+        // Force layout update
+        setNeedsLayout()
+        layoutIfNeeded()
     }
 }
+
 
 // MARK: - Protocol for feedback actions
 protocol LuResponseFeedbackDelegate: AnyObject {
     func didProvideFeedback(for messageId: String, positive: Bool)
 }
 
-// MARK: - Protocol for follow-up question actions
+/// Protocol for follow-up question actions
 protocol LuFollowUpQuestionDelegate: AnyObject {
     func didSelectFollowUpQuestion(_ question: String)
+}
+
+/// Protocol for text-to-speech actions
+protocol LuSpeechDelegate: AnyObject {
+    func speak(messageText: String, for cell: LuResponseCell)
+    func stopSpeaking()
 }
 
 // MARK: - View Controller
@@ -503,19 +608,34 @@ protocol LuFollowUpQuestionDelegate: AnyObject {
 /// View controller that displays a chat interface with Lu using a bottom sheet presentation
 class LuChatViewController: UIViewController {
     
+    // Default follow-up questions to use as fallback
+    private let dummyQuestions = [
+        "How do I beat this level?",
+        "What are the best power-ups?",
+        "Any hidden secrets or cheats?"
+    ]
+    
     // MARK: - Properties
     
     private let game: Game
     private let emulatorCore: EmulatorCore?
     private var conversation: LuChatConversation
     private var isInitialSetup = true
-    private var tempAttachments: [LuChatAttachment] = []
     private var isAskingQuestion = false
     private var isHandlingSendFeedback = false
     private var isGeneralChat = false
     private let isFromGamesViewController: Bool
+    private var currentSessionId: String?
+    private var lastResponseMessageId: String?
     
-    // UI Components
+    // Text-to-speech properties
+    private let speechSynthesizer = AVSpeechSynthesizer()
+    private var activeVoice: AVSpeechSynthesisVoice?
+    private var speakingCell: LuResponseCell?
+    private var textViewHeightConstraint: NSLayoutConstraint?
+    
+    // Callback for when speech finishes
+    var onSpeechFinished: (() -> Void)?
     private lazy var tableView: UITableView = {
         let tableView = UITableView(frame: .zero, style: .insetGrouped)
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -527,11 +647,49 @@ class LuChatViewController: UIViewController {
         tableView.keyboardDismissMode = .onDrag
         tableView.backgroundColor = .systemGroupedBackground
         tableView.separatorStyle = .none
+        
+        // Improve cell sizing configuration
         tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 80
+        tableView.estimatedRowHeight = 120
+        
+        // Essential for proper dynamic sizing
+        tableView.estimatedSectionHeaderHeight = 0
+        tableView.estimatedSectionFooterHeight = 0
+        
+        // Allow cell contents to expand fully
+        tableView.cellLayoutMarginsFollowReadableWidth = false
+        
         tableView.contentInset = UIEdgeInsets(top: 10, left: 0, bottom: 80, right: 0)
+        
         return tableView
     }()
+    
+    func refreshConversation() {
+        // Force reload the conversation from storage
+        conversation = LuChatManager.shared.getOrCreateConversation(
+            gameId: game.identifier,
+            gameName: game.name
+        )
+        
+        luLog(.info, "Refreshed conversation with ID: \(conversation.id), now has \(conversation.messages.count) messages")
+        
+        // Reload the table view with the fresh data
+        tableView.reloadData()
+        
+        // Scroll to the newest messages
+        if !conversation.messages.isEmpty {
+            scrollToBottom(animated: false)
+        }
+    }
+
+    // Call this method in viewWillAppear
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        // Always refresh the conversation data when the view appears
+        refreshConversation()
+    }
+
     
     private lazy var questionInputBar: UIView = {
         let bar = UIView()
@@ -574,7 +732,6 @@ class LuChatViewController: UIViewController {
         "Ask anything about Delta or games in general..." :
         "Ask Lu about this game..."
     }
-    private var textViewHeightConstraint: NSLayoutConstraint?
     
     private lazy var thinkingLabel: UILabel = {
         let label = UILabel()
@@ -646,6 +803,8 @@ class LuChatViewController: UIViewController {
         setupUI()
         setupNavigationBar()
         setupKeyboardObservers()
+        setupSpeechSynthesizer()
+        setupAudioSession()
         
         // Set up initial height constraint for text view
         textViewHeightConstraint = questionTextView.heightAnchor.constraint(equalToConstant: 40)
@@ -665,6 +824,14 @@ class LuChatViewController: UIViewController {
         luLog(.info, "LuChatViewController.viewDidLoad: tableView.isUserInteractionEnabled=\(self.tableView.isUserInteractionEnabled), tableView.isHidden=\(self.tableView.isHidden)")
     }
     
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        
+        // Force the table to layout its cells
+        tableView.beginUpdates()
+        tableView.endUpdates()
+    }
+    
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         
@@ -675,20 +842,23 @@ class LuChatViewController: UIViewController {
         // Log the interaction state of the main view and subviews
         luLog(.info, "LuChatViewController.viewDidAppear: view.isUserInteractionEnabled=\(self.view.isUserInteractionEnabled), view.isHidden=\(self.view.isHidden), view.alpha=\(self.view.alpha)")
         luLog(.info, "LuChatViewController.viewDidAppear: tableView.isUserInteractionEnabled=\(self.tableView.isUserInteractionEnabled), tableView.isHidden=\(self.tableView.isHidden), tableView.alpha=\(self.tableView.alpha)")
-        for (i, subview) in self.view.subviews.enumerated() {
-            luLog(.info, "Subview[\(i)]: \(type(of: subview)), frame=\(subview.frame), isUserInteractionEnabled=\(subview.isUserInteractionEnabled), isHidden=\(subview.isHidden), alpha=\(subview.alpha)")
-        }
         
         self.view.isUserInteractionEnabled = true
         self.tableView.isUserInteractionEnabled = true
         self.view.isHidden = false
         self.tableView.isHidden = false
         luLog(.info, "Force enabled view and tableView interaction & visibility in viewDidAppear.")
+        
+        // Refresh layout and scroll to bottom again
+        tableView.beginUpdates()
+        tableView.endUpdates()
+        scrollToBottom(animated: true)
     }
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         questionTextView.resignFirstResponder()
+        speechSynthesizer.stopSpeaking(at: .immediate)
     }
     
     // MARK: - Setup Methods
@@ -701,7 +871,6 @@ class LuChatViewController: UIViewController {
         questionInputBar.addSubview(sendButton)
         questionInputBar.addSubview(loadingIndicator)
         questionInputBar.addSubview(thinkingLabel)
-        questionInputBar.addSubview(loadingIndicator)
         questionBarBottomConstraint = questionInputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -770,7 +939,136 @@ class LuChatViewController: UIViewController {
         )
     }
     
-    // MARK: - Actions
+    private func setupSpeechSynthesizer() {
+        luLog(.info, "Setting up speech synthesizer")
+        speechSynthesizer.delegate = self
+        
+        // Check if TTS is enabled in settings
+        let isTTSEnabled = ExperimentalFeatures.shared.Lu.wrappedValue.enableVoiceInteraction
+        if !isTTSEnabled {
+            luLog(.info, "🔊 Text-to-speech is disabled in settings")
+            return
+        }
+        
+        // Get available voices
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        
+        // Get user's voice preference from Lu settings
+        if let voicePreference = ExperimentalFeatures.shared.Lu.wrappedValue.ttsVoice {
+            let voiceIdentifier = voicePreference.rawValue
+            luLog(.info, "🔊 User has selected voice preference: \(voicePreference.displayName) (ID: \(voiceIdentifier))")
+            
+            if !voiceIdentifier.isEmpty {
+                // Try to find the selected voice
+                if let selectedVoice = voices.first(where: { $0.identifier == voiceIdentifier }) {
+                    activeVoice = selectedVoice
+                    luLog(.info, "✅ Found and using selected voice: \(selectedVoice.identifier)")
+                } else {
+                    luLog(.info, "⚠️ Selected voice not available on this device: \(voiceIdentifier)")
+                    // Try to find a similar voice based on user preferences
+                    if let similarVoice = findSimilarVoice(to: voiceIdentifier, from: voices) {
+                        activeVoice = similarVoice
+                        luLog(.info, "🔄 Using similar voice as fallback: \(similarVoice.identifier)")
+                    } else {
+                        // Only fall back to default if no similar voice is found
+                        selectDefaultVoice(from: voices)
+                    }
+                }
+            } else {
+                // Empty string means "System Default"
+                luLog(.info, "🔊 Using system default voice as selected")
+                activeVoice = AVSpeechSynthesisVoice(language: "en-US")
+            }
+        } else {
+            luLog(.info, "🔊 No voice preference set, using default selection logic")
+            selectDefaultVoice(from: voices)
+        }
+        
+        // Verify voice selection
+        if let voice = activeVoice {
+            luLog(.info, "Active voice set to: \(voice.identifier)")
+        } else {
+            luLog(.error, "Failed to set active voice")
+            activeVoice = AVSpeechSynthesisVoice(language: "en-US")
+            luLog(.info, "Fallback to default voice")
+        }
+    }
+    
+    // Helper method for finding a similar voice when preferred one isn't available
+    private func findSimilarVoice(to preferredIdentifier: String, from voices: [AVSpeechSynthesisVoice]) -> AVSpeechSynthesisVoice? {
+        // First determine if we're looking for a male or female voice
+        let preferredGender: AVSpeechSynthesisVoiceGender = preferredIdentifier.contains("Male") ? .male : .female
+        
+        // Check if we can determine the language from the identifier
+        var languageCode = "en-US" // Default to US English
+        
+        // Common language codes to look for
+        let languageCodes = ["en-US", "en-GB", "en-AU", "en-IE", "en-ZA", "en-IN"]
+        for code in languageCodes {
+            if preferredIdentifier.contains(code) {
+                languageCode = code
+                break
+            }
+        }
+        
+        // First try to find an enhanced quality voice with same gender and language
+        if let match = voices.first(where: {
+            $0.gender == preferredGender &&
+            $0.language.hasPrefix(languageCode) &&
+            $0.quality == .enhanced
+        }) {
+            return match
+        }
+        
+        // Next try just the same language with enhanced quality
+        if let match = voices.first(where: {
+            $0.language.hasPrefix(languageCode) &&
+            $0.quality == .enhanced
+        }) {
+            return match
+        }
+        
+        // Fall back to any enhanced English voice
+        if let match = voices.first(where: {
+            $0.language.hasPrefix("en") &&
+            $0.quality == .enhanced
+        }) {
+            return match
+        }
+        
+        // Last resort: any English voice
+        return voices.first(where: { $0.language.hasPrefix("en") })
+    }
+    
+    // Helper method for selecting the default voice
+    private func selectDefaultVoice(from voices: [AVSpeechSynthesisVoice]) {
+        // Try to find a good male voice for US English
+        if let maleVoice = voices.first(where: { $0.identifier.contains("en-US") && ($0.gender == .male) && $0.quality == .enhanced }) {
+            activeVoice = maleVoice
+            luLog(.info, "Selected male TTS voice: \(maleVoice.identifier)")
+        }
+        // Fallback to any enhanced voice
+        else if let enhancedVoice = voices.first(where: { $0.identifier.contains("en-US") && $0.quality == .enhanced }) {
+            activeVoice = enhancedVoice
+            luLog(.info, "Selected enhanced TTS voice: \(enhancedVoice.identifier)")
+        }
+        // Last resort - default voice
+        else {
+            activeVoice = AVSpeechSynthesisVoice(language: "en-US")
+            luLog(.info, "Selected default TTS voice")
+        }
+    }
+    
+    func setupAudioSession() {
+        luLog(.info, "Setting up audio session for speech")
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            luLog(.info, "Audio session setup successful with options: duckOthers, mixWithOthers")
+        } catch {
+            luLog(.error, "Failed to setup audio session: \(error.localizedDescription)")
+        }
+    }
     
     @objc private func handleDismiss() {
         dismiss(animated: true)
@@ -818,17 +1116,29 @@ class LuChatViewController: UIViewController {
         loadingIndicator.startAnimating()
         thinkingLabel.isHidden = false
         questionTextView.resignFirstResponder()
+        
+        // 4. Clear follow-up questions from previous messages when sending a new question
+        if let lastMessageIndex = conversation.messages.lastIndex(where: { $0.type == .luResponse }) {
+            var updatedMessage = conversation.messages[lastMessageIndex]
+            updatedMessage.followUpQuestions = nil
+            conversation.messages[lastMessageIndex] = updatedMessage
+        }
+        
+        // Add the user message
         let userMessage = LuChatMessage(type: .userQuestion, content: question)
         conversation.addMessage(userMessage)
         LuChatManager.shared.saveConversations()
         
+        // Update the UI
         tableView.reloadData()
+        tableView.layoutIfNeeded()
         scrollToBottom(animated: true)
         
-        
+        // Clear the input field
         questionTextView.text = ""
         questionTextView.textColor = .label
         
+        // Send to Lu API
         askLu(question: question)
     }
     
@@ -876,7 +1186,45 @@ class LuChatViewController: UIViewController {
         guard conversation.messages.count > 0 else { return }
         let lastRow = conversation.messages.count - 1
         let indexPath = IndexPath(row: lastRow, section: 0)
-        tableView.scrollToRow(at: indexPath, at: .bottom, animated: animated)
+        
+        // Check if the indexPath is valid before scrolling
+        if indexPath.row < tableView.numberOfRows(inSection: indexPath.section) {
+            tableView.scrollToRow(at: indexPath, at: .bottom, animated: animated)
+        }
+    }
+    
+    // Update a message's follow-up questions and reload just that cell
+    private func updateFollowUpQuestionsForLastMessage(with questions: [String]) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            guard let lastMessageId = self.lastResponseMessageId,
+                  let index = self.conversation.messages.firstIndex(where: { $0.id == lastMessageId }) else {
+                return
+            }
+            
+            // Update the message with follow-up questions
+            var updatedMessage = self.conversation.messages[index]
+            updatedMessage.followUpQuestions = questions
+            self.conversation.messages[index] = updatedMessage
+            
+            // Save to storage
+            LuChatManager.shared.saveConversations()
+            
+            // Find the corresponding cell and update it
+            let indexPath = IndexPath(row: index, section: 0)
+            if let cell = self.tableView.cellForRow(at: indexPath) as? LuResponseCell {
+                // Configure the cell with the updated message
+                cell.configure(with: updatedMessage, isLastAssistantMessage: true)
+                
+                // Force layout update
+                self.tableView.beginUpdates()
+                self.tableView.endUpdates()
+            } else {
+                // If the cell isn't visible, just reload the table view
+                self.tableView.reloadData()
+            }
+        }
     }
     
     private func askLu(question: String) {
@@ -1068,20 +1416,33 @@ class LuChatViewController: UIViewController {
     }
     
     private func handleLuResponse(response: LuResponse, question: String) {
-        let responseContent = response.answer
+        // Store the session_id for follow-up questions
+        if let sessionId = response.session_id {
+            self.currentSessionId = sessionId
+            luLog(.info, "Received session_id: \(sessionId) from Lu API response")
+        }
         
-        // Use the message_id from the API response instead of generating a new UUID
-        let responseMessage = LuChatMessage(
-            id: response.message_id,  // Use the message_id from the Lu API
+        // Store the message ID for follow-up questions
+        self.lastResponseMessageId = response.message_id
+        
+        // 1. First add the response message to the conversation without follow-up questions
+        var responseMessage = LuChatMessage(
+            id: response.message_id,
             type: .luResponse,
-            content: responseContent
+            content: response.answer
         )
         
+        // Add the message to the conversation
         conversation.addMessage(responseMessage)
         LuChatManager.shared.saveConversations()
         
+        // 2. Show the message in the UI immediately
         tableView.reloadData()
+        tableView.layoutIfNeeded() // Force layout update
         scrollToBottom(animated: true)
+        
+        // 3. After showing the message, try to fetch follow-up questions
+        fetchFollowUpQuestionsForLastMessage()
     }
     
     private func resetInputUI() {
@@ -1268,6 +1629,159 @@ class LuChatViewController: UIViewController {
         task.resume()
     }
     
+    // MARK: - Follow-up Questions API
+    
+    private func fetchFollowUpQuestionsForLastMessage() {
+        guard let messageId = lastResponseMessageId,
+              let index = conversation.messages.firstIndex(where: { $0.id == messageId }) else {
+            luLog(.error, "Could not find last response message ID to fetch follow-up questions")
+            return
+        }
+        
+        // Log the attempt to fetch follow-up questions
+        luLog(.info, "Attempting to fetch follow-up questions for message ID: \(messageId)")
+        
+        // Use dummy questions as fallback
+        let dummyFollowUps = [
+            "How do I beat this level?",
+            "What are the best power-ups?",
+            "Any hidden secrets or cheats?"
+        ]
+        
+        // Try to fetch from API if we have a session ID
+        if let sessionId = currentSessionId {
+            // Create the URL for follow-up questions
+            let urlString = APIConstants.followUpBaseURL.replacingOccurrences(of: "{session-id}", with: sessionId)
+            luLog(.info, "Fetching follow-up questions from URL: \(urlString)")
+            
+            guard let url = URL(string: urlString) else {
+                // If URL creation fails, use dummy questions
+                luLog(.error, "Failed to create URL for follow-up questions API")
+                updateLastMessageWithFollowUps(dummyFollowUps)
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let context = createAPIContext(for: game, emulatorCore: self.emulatorCore, includeAttachments: false)
+            request.addContextHeaders(context: context)
+            
+            luLog(.info, "Sending request for follow-up questions...")
+            
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                guard let self = self else { return }
+                
+                // Log response details
+                if let error = error {
+                    luLog(.error, "Follow-up questions API error: \(error.localizedDescription)")
+                }
+                
+                if let httpResponse = response as? HTTPURLResponse {
+                    luLog(.info, "Follow-up questions API response status: \(httpResponse.statusCode)")
+                }
+                
+                DispatchQueue.main.async {
+                    // Default to dummy questions if anything fails
+                    var followUps = dummyFollowUps
+                    
+                    if let data = data,
+                       let httpResponse = response as? HTTPURLResponse {
+                        
+                        if httpResponse.statusCode == 200 {
+                            do {
+                                let followUpResponse = try JSONDecoder().decode(FollowUpQuestionsResponse.self, from: data)
+                                if !followUpResponse.questions.isEmpty {
+                                    followUps = followUpResponse.questions
+                                    luLog(.info, "Received \(followUps.count) follow-up questions from API")
+                                } else {
+                                    luLog(.info, "API returned empty follow-up questions array, using dummy questions")
+                                }
+                            } catch {
+                                luLog(.error, "Failed to decode follow-up questions: \(error.localizedDescription)")
+                                if let responseText = String(data: data, encoding: .utf8) {
+                                    luLog(.error, "Response text: \(responseText)")
+                                }
+                            }
+                        } else {
+                            luLog(.error, "Follow-up questions API returned non-200 status code: \(httpResponse.statusCode)")
+                            if let responseText = String(data: data, encoding: .utf8) {
+                                luLog(.error, "Error response: \(responseText)")
+                            }
+                        }
+                    } else {
+                        luLog(.error, "No data received from follow-up questions API")
+                    }
+                    
+                    // Update the message with follow-up questions
+                    self.updateLastMessageWithFollowUps(followUps)
+                }
+            }.resume()
+        } else {
+            luLog(.info, "No session ID available, using dummy follow-up questions")
+            // No session ID, just use dummy questions
+            updateLastMessageWithFollowUps(dummyFollowUps)
+        }
+    }
+
+    
+    private func updateLastMessageWithFollowUps(_ questions: [String]) {
+        guard let messageId = lastResponseMessageId,
+              let index = conversation.messages.firstIndex(where: { $0.id == messageId }) else {
+            luLog(.error, "updateLastMessageWithFollowUps: Could not find message with ID \(String(describing: lastResponseMessageId))")
+            return
+        }
+        
+        luLog(.info, "Updating message ID \(messageId) with \(questions.count) follow-up questions")
+        
+        // Update the message with follow-up questions
+        var updatedMessage = conversation.messages[index]
+        updatedMessage.followUpQuestions = questions
+        conversation.messages[index] = updatedMessage
+        
+        // Save to storage
+        LuChatManager.shared.saveConversations()
+        
+        // Update the UI and scroll properly
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Try to update just the specific cell if it's visible
+            let indexPath = IndexPath(row: index, section: 0)
+            if let cell = self.tableView.cellForRow(at: indexPath) as? LuResponseCell {
+                luLog(.info, "Updating visible cell for message ID \(messageId) with follow-up questions")
+                cell.configure(with: updatedMessage, isLastAssistantMessage: true)
+                
+                // Force layout update
+                self.tableView.beginUpdates()
+                self.tableView.endUpdates()
+                
+                // After updating the layout, scroll to show follow-up buttons
+                // Add a brief delay to ensure the layout is complete
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    // Calculate contentOffset to show follow-up buttons
+                    let cellRect = self.tableView.rectForRow(at: indexPath)
+                    let followUpContainerFrame = cell.followUpContainer.convert(cell.followUpContainer.bounds, to: self.tableView)
+                    
+                    // Create a rect that includes both the message and follow-up buttons with padding
+                    let combinedRect = cellRect.union(followUpContainerFrame).insetBy(dx: 0, dy: -20)
+                    
+                    // Scroll to reveal this combined area
+                    self.tableView.scrollRectToVisible(combinedRect, animated: true)
+                }
+            } else {
+                // If the cell isn't visible, reload the table view
+                luLog(.info, "Cell for message ID \(messageId) not visible, reloading entire table")
+                self.tableView.reloadData()
+                
+                // After reloading, scroll to the message
+                self.tableView.layoutIfNeeded()
+                self.scrollToBottom(animated: true)
+            }
+        }
+    }
+
     
     // MARK: - API Context Creation
     private func createAPIContext(for game: Game, emulatorCore: EmulatorCore?, includeAttachments: Bool) -> APIContext {
@@ -1470,19 +1984,30 @@ extension LuChatViewController: UITableViewDataSource {
         case .userQuestion:
             let cell = tableView.dequeueReusableCell(withIdentifier: UserMessageCell.reuseIdentifier, for: indexPath) as! UserMessageCell
             cell.configure(with: message)
+            // Ensure proper layout
+            cell.layoutIfNeeded()
             return cell
             
         case .luResponse:
             let cell = tableView.dequeueReusableCell(withIdentifier: LuResponseCell.reuseIdentifier, for: indexPath) as! LuResponseCell
             cell.feedbackDelegate = self
             cell.followUpDelegate = self
-            luLog(.info, "cellForRowAt: Set feedbackDelegate for messageId: \(message.id), cell: \(cell)")
-            cell.configure(with: message)
+            
+            // Check if this is the last assistant message
+            let isLastAssistantMessage = indexPath.row == conversation.messages.lastIndex(where: { $0.type == .luResponse })
+            
+            // Configure the cell with the message and pass whether it's the last assistant message
+            cell.configure(with: message, isLastAssistantMessage: isLastAssistantMessage)
+            
+            // Ensure proper layout
+            cell.layoutIfNeeded()
             return cell
             
         case .systemMessage:
             let cell = tableView.dequeueReusableCell(withIdentifier: SystemMessageCell.reuseIdentifier, for: indexPath) as! SystemMessageCell
             cell.configure(with: message)
+            // Ensure proper layout
+            cell.layoutIfNeeded()
             return cell
         }
     }
@@ -1492,6 +2017,22 @@ extension LuChatViewController: UITableViewDataSource {
 extension LuChatViewController: UITableViewDelegate {
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         return UITableView.automaticDimension
+    }
+    
+    func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        let message = conversation.messages[indexPath.row]
+        
+        // Provide better estimates based on content type and length
+        switch message.type {
+        case .luResponse:
+            // Assistant responses tend to be longer
+            return min(300, CGFloat(message.content.count / 4) + 60)
+        case .userQuestion:
+            // User questions are usually shorter
+            return min(150, CGFloat(message.content.count / 5) + 40)
+        case .systemMessage:
+            return 100
+        }
     }
     
     func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
@@ -1637,7 +2178,122 @@ extension LuChatViewController: LuFollowUpQuestionDelegate {
     }
 }
 
-// MARK: - API Models
+// MARK: - LuSpeechDelegate
+extension LuChatViewController: LuSpeechDelegate {
+    func speak(messageText: String, for cell: LuResponseCell) {
+        luLog(.info, "LuSpeechDelegate.speak called with text length: \(messageText.count)")
+        
+        // Check if TTS is enabled in settings
+        if !ExperimentalFeatures.shared.Lu.wrappedValue.enableVoiceInteraction {
+            luLog(.info, "Text-to-speech is disabled in settings - not speaking message")
+            return
+        }
+        
+        // Ensure audio session is set up
+        setupAudioSession()
+        
+        // Stop any currently playing speech
+        stopSpeaking()
+        
+        // Ensure we have an active voice selected
+        if activeVoice == nil {
+            setupSpeechSynthesizer()
+        }
+        
+        // Set up a new utterance
+        let utterance = AVSpeechUtterance(string: messageText)
+        utterance.voice = activeVoice
+        utterance.rate = 0.5  // Slightly slower rate for better clarity
+        utterance.pitchMultiplier = 1.1  // Slight pitch increase for "upbeat" tone
+        utterance.volume = 1.0
+        
+        // Store reference to the cell we're speaking for
+        self.speakingCell = cell
+        
+        // Log voice being used for this utterance with more details
+        if let voice = utterance.voice {
+            luLog(.info, "🗣️ Speaking with voice: \(voice.identifier)")
+            if let preference = ExperimentalFeatures.shared.Lu.wrappedValue.ttsVoice {
+                luLog(.info, "📱 Using voice matching user preference: \(preference.displayName)")
+            } else {
+                luLog(.info, "📱 Using default voice (no user preference set)")
+            }
+        } else {
+            luLog(.error, "⚠️ No voice set for utterance, system will use default")
+        }
+        
+        // Configure audio session
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            luLog(.error, "Error activating audio session: \(error.localizedDescription)")
+        }
+        
+        // Start speech
+        luLog(.info, "Starting speech with synthesizer")
+        speechSynthesizer.speak(utterance)
+    }
+    
+    func stopSpeaking() {
+        luLog(.info, "LuSpeechDelegate.stopSpeaking called, isSpeaking: \(speechSynthesizer.isSpeaking)")
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
+    }
+}
+
+// MARK: - AVSpeechSynthesizerDelegate
+extension LuChatViewController: AVSpeechSynthesizerDelegate {
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        luLog(.info, "AVSpeechSynthesizerDelegate.didStart called")
+        guard let speakingCell = speakingCell else {
+            luLog(.error, "No speaking cell found in didStart")
+            return
+        }
+        speakingCell.updateSpeakingState(isSpeaking: true)
+    }
+    
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        luLog(.info, "AVSpeechSynthesizerDelegate.didFinish called - Speech completed naturally")
+        guard let speakingCell = speakingCell else {
+            luLog(.info, "No speaking cell found in didFinish - still calling completion")
+            // Call completion even without a cell
+            onSpeechFinished?()
+            return
+        }
+        speakingCell.updateSpeakingState(isSpeaking: false)
+        self.speakingCell = nil
+        
+        // Call completion handler
+        if let callback = onSpeechFinished {
+            luLog(.info, "🎯 Calling onSpeechFinished callback from didFinish")
+            callback()
+        } else {
+            luLog(.error, "⚠️ onSpeechFinished callback is nil in didFinish")
+        }
+    }
+    
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        luLog(.info, "AVSpeechSynthesizerDelegate.didCancel called")
+        guard let speakingCell = speakingCell else {
+            luLog(.info, "No speaking cell found in didCancel - still calling completion")
+            // Call completion even without a cell
+            onSpeechFinished?()
+            return
+        }
+        speakingCell.updateSpeakingState(isSpeaking: false)
+        self.speakingCell = nil
+        
+        // Call completion handler
+        if let callback = onSpeechFinished {
+            luLog(.info, "🎯 Calling onSpeechFinished callback from didCancel")
+            callback()
+        } else {
+            luLog(.error, "⚠️ onSpeechFinished callback is nil in didCancel")
+        }
+    }
+}
 
 private struct LuRequest: Codable {
     let game_id: String
@@ -1650,12 +2306,35 @@ private struct LuRequest: Codable {
 private struct LuResponse: Codable {
     let answer: String
     let message_id: String
+    let session_id: String?
 }
+
 private struct FeedbackRequest: Codable {
     let message_id: String
     let feedback: String
     let feedback_message: String?
     let channel: String = "DELTA"  // Add channel parameter to match expected format
+}
+
+private struct FollowUpQuestionsResponse: Codable {
+    let questions: [String]
+    
+    // Support direct decoding from array if the API returns just an array of strings
+    init(from decoder: Decoder) throws {
+        do {
+            // Try to decode as an object with a "questions" field
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.questions = try container.decode([String].self, forKey: .questions)
+        } catch {
+            // Fall back to decoding as a plain array of strings
+            let container = try decoder.singleValueContainer()
+            self.questions = try container.decode([String].self)
+        }
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case questions
+    }
 }
 
 private struct APIContext: Codable {
@@ -1723,10 +2402,10 @@ private enum APIConstants {
         }
         return url
     }()
-    
     static let askBaseURL = "\(baseURL)/ask"
     static let supportBaseURL = "\(baseURL)/check-rom"
     static let feedbackBaseURL = "\(baseURL)/feedbacks"
+    static let followUpBaseURL = "\(baseURL)/sessions/{session-id}/follow-ups"
     
     static let supportTimeout: TimeInterval = {
         guard let timeout = plist["SUPPORT_TIMEOUT"] as? TimeInterval else {
