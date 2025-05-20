@@ -248,7 +248,8 @@ class BaseChatCell: UITableViewCell {
             messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor),
             messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
             messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
-            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor)
+            // Allow space at bottom for timestamp by lowering priority
+            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor).with(priority: .defaultHigh)
         ])
     }
     
@@ -274,27 +275,31 @@ class UserMessageCell: BaseChatCell {
         messageView.backgroundColor = .systemBlue
         messageTextView.textColor = .white
         
-        // Configure timestamp label
+        // Configure timestamp label inside the bubble
         timestampLabel.translatesAutoresizingMaskIntoConstraints = false
         timestampLabel.font = UIFont.systemFont(ofSize: 11)
-        timestampLabel.textColor = .secondaryLabel
+        // Make timestamp text match message content color
+        timestampLabel.textColor = .white
         timestampLabel.textAlignment = .right
-        contentView.addSubview(timestampLabel)
+        // Move timestamp label inside messageView and bring above text view
+        messageView.addSubview(timestampLabel)
+        messageView.bringSubviewToFront(timestampLabel)
         
-        // Fixed width constraints - Use priority to fix constraint conflicts
+        // Position and size constraints
         NSLayoutConstraint.activate([
+            // Bubble position & size
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            // Use a higher priority constraint for leading to prevent width conflicts
             messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60).with(priority: .defaultHigh),
-            messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
-            
-            // Constrain messageView width to a maximum of 75% of the content width
             messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75).with(priority: .required),
-            
-            timestampLabel.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
-            timestampLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
-            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+            messageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4).with(priority: .required),
+
+            // Timestamp inside bubble, bottom-right with padding
+            timestampLabel.trailingAnchor.constraint(equalTo: messageView.trailingAnchor, constant: -8),
+            timestampLabel.bottomAnchor.constraint(equalTo: messageView.bottomAnchor, constant: -4),
+
+            // Ensure text view ends above the timestamp
+            messageTextView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -4).with(priority: .required)
         ])
     }
     
@@ -362,12 +367,17 @@ class LuResponseCell: BaseChatCell {
         followUpContainer.alignment = .fill
         contentView.addSubview(followUpContainer)
         
-        // Add timestamp label to contentView
+        // Configure timestamp label inside the message bubble
         timestampLabel.translatesAutoresizingMaskIntoConstraints = false
         timestampLabel.font = UIFont.systemFont(ofSize: 11)
-        timestampLabel.textColor = .secondaryLabel
-        timestampLabel.textAlignment = .left
-        contentView.addSubview(timestampLabel)
+        // Match timestamp color to message text for clarity
+        timestampLabel.textColor = UIColor { trait in
+            trait.userInterfaceStyle == .dark ? .white : .black
+        }
+        timestampLabel.textAlignment = .right
+        // Move timestamp label inside the bubble view and bring above text view
+        messageView.addSubview(timestampLabel)
+        messageView.bringSubviewToFront(timestampLabel)
         
         // Bring to front to ensure proper z-order
         contentView.bringSubviewToFront(followUpContainer)
@@ -391,27 +401,28 @@ class LuResponseCell: BaseChatCell {
     private func setupConstraints() {
         // Fix constraint conflicts by using appropriate priorities
         NSLayoutConstraint.activate([
-            // Fix width constraints for message view
+            // Bubble position & size
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             messageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            // Set a FIXED width constraint (not lessThanOrEqual) to ensure message width doesn't expand with content
             messageView.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.75).with(priority: .required - 1),
-            // Remove trailing constraint as it can conflict with fixed width and allow horizontal expansion
-            // Instead, ensure the messageView is positioned properly with leading constraint only
-            // Add a bottom constraint to properly limit the messageView expansion
+            // Limit bubble from extending too far down
             messageView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -40).with(priority: .defaultHigh),
             
-            // timestampLabel constraints - positioned below followUpContainer
-            timestampLabel.topAnchor.constraint(equalTo: followUpContainer.bottomAnchor, constant: 4),
-            timestampLabel.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
-            timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
+            // Timestamp inside bubble, bottom-right with padding
+            timestampLabel.trailingAnchor.constraint(equalTo: messageView.trailingAnchor, constant: -8),
+            timestampLabel.bottomAnchor.constraint(equalTo: messageView.bottomAnchor, constant: -4),
+            
+            // Ensure text view ends above the timestamp
+            messageTextView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -4).with(priority: .required)
         ])
         
         // Align follow-up container directly under and matching bubble width
         NSLayoutConstraint.activate([
             followUpContainer.topAnchor.constraint(equalTo: messageView.bottomAnchor, constant: 8).with(priority: .required),
             followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor).with(priority: .required),
-            followUpContainer.trailingAnchor.constraint(equalTo: messageView.trailingAnchor).with(priority: .required)
+            followUpContainer.trailingAnchor.constraint(equalTo: messageView.trailingAnchor).with(priority: .required),
+            // Ensure the container or bubble bottom anchors the cell bottom
+            followUpContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4).with(priority: .required)
         ])
     }
     

@@ -38,6 +38,8 @@ struct VoiceType: RawRepresentable {
     }
     
     static var availableVoices: [VoiceType] {
+        // Maximum number of voices to display
+        let maxVoices = 5
         // Define known voices
         let knownVoices: [(id: String, displayName: String)] = [
             ("com.apple.voice.premium.en-US.Evan", "Evan"),
@@ -45,36 +47,38 @@ struct VoiceType: RawRepresentable {
             ("com.apple.voice.compact.en-US.Daniel", "Daniel"),
             ("com.apple.voice.compact.en-US.Samantha", "Samantha")
         ]
-        
-        // Get all available voices on the device
+
+        // Get all available English voices on the device
         let availableSystemVoices = AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language.hasPrefix("en") } // Only keep English voices
-        
-        // Create a map of voice identifiers to AVSpeechSynthesisVoice objects for quick lookup
+            .filter { $0.language.hasPrefix("en") }
+
+        // Map voice identifiers to AVSpeechSynthesisVoice objects for quick lookup
         let voiceMap = Dictionary(uniqueKeysWithValues: availableSystemVoices.map { ($0.identifier, $0) })
-        
-        // Create array with proper type
+
         var voices: [VoiceType] = []
-        
-        // Add known voices first if they are available on the device
-        for knownVoice in knownVoices {
-            if voiceMap[knownVoice.id] != nil {
-                voices.append(VoiceType(rawValue: knownVoice.id, displayName: knownVoice.displayName))
+
+        // Add known voices first if available
+        for known in knownVoices {
+            if voiceMap[known.id] != nil {
+                voices.append(VoiceType(rawValue: known.id, displayName: known.displayName))
+                if voices.count >= maxVoices {
+                    return voices
+                }
             }
         }
-        
-        // Then add any other English voices available on the device
-        for voice in availableSystemVoices {
-            // Skip if this is one of our known voices we already added
-            if knownVoices.contains(where: { $0.id == voice.identifier }) {
+
+        // Then add other English voices up to the limit
+        for systemVoice in availableSystemVoices {
+            if knownVoices.contains(where: { $0.id == systemVoice.identifier }) {
                 continue
             }
-            let displayName = "\(voice.name)"
-            
-            // For non-known voices, use the actual voice identifier as rawValue
-            voices.append(VoiceType(rawValue: voice.identifier, displayName: displayName))
+            let displayName = systemVoice.name
+            voices.append(VoiceType(rawValue: systemVoice.identifier, displayName: displayName))
+            if voices.count >= maxVoices {
+                break
+            }
         }
-        
+
         return voices
     }
 }
