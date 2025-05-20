@@ -976,13 +976,13 @@ extension GameViewController {
                     }
                     
                     luLog(.error, "check-rom error: \(errorMessage) - \(error.localizedDescription)")
-                    self.showError("Sorry, but Lu can't help you with this game right now.")
+                    self.showError("Sorry, but Lu can't help you with this game right now. Error : \(errorMessage)\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     completion(false)
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    self.showError("Received an invalid response. Please try again.")
+                    self.showError("Received an invalid response. Please try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     luLog(.error, "check-rom error: invalid response \(response)")
                     completion(false)
                     return
@@ -1005,7 +1005,7 @@ extension GameViewController {
                             completion(true)
                         } catch {
                             luLog(.error, "check-rom decode error: \(error.localizedDescription)")
-                            self.showError("Failed to process game support information")
+                            self.showError("Failed to process game support information.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                             completion(false)
                         }
                     }
@@ -1015,12 +1015,12 @@ extension GameViewController {
                     completion(false)
                 case 500...599:
                     luLog(.error, "check-rom server error: Status \(httpResponse.statusCode)")
-                    self.showError("Lu is temporarily unavailable. Please try again later.")
+                    self.showError("Lu is temporarily unavailable. Please try again later.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     completion(false)
                     
                 default:
                     luLog(.error, "check-rom unexpected error, status: \(httpResponse.statusCode)")
-                    self.showError("Something unexpected happened. Please try again.")
+                    self.showError("Something unexpected happened. Please try again.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                     completion(false)
                 }
             }
@@ -1258,7 +1258,7 @@ extension GameViewController: SpeechManagerDelegate {
                             } else {
                                 // Reset button state and show error message if request failed
                                 self.luButtonState = .idle
-                                self.showError("Sorry, Lu couldn't understand your question.")
+                                self.showError("Sorry, Lu couldn't understand your question.\n\nIf this issue persists, reach us on Discord: https://discord.gg/XvSysJpQrn")
                             }
                         }
                     }
@@ -2001,16 +2001,31 @@ extension GamesViewController {
     }
     
     @objc func luButtonTapped() {
-        let hardcodedGameId = "0097b2c8-ef65-49e6-9f78-3f896c73db2e"
-        let hardcodedGameIdStaging = ""
+        let productionGameId = "0097b2c8-ef65-49e6-9f78-3f896c73db2e"
+        let stagingGameId = "ccf36368-f2ff-4974-8d1f-62a3c40512a0"
+        let developmentGameId = ""
+        
+        // Choose the appropriate ID based on current environment
+        let activeGameId: String
+        let isGeneralChat = true // Since we're on GamesViewController, this should be true
+        
+        
+        switch APIConstants.currentEnvironment {
+        case .production:
+            activeGameId = productionGameId
+        case .staging:
+            activeGameId = stagingGameId
+        case .development:
+            activeGameId = developmentGameId
+        }
         
         // Set the active game ID directly
-        ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId = hardcodedGameId
+        ExperimentalFeatures.shared.Lu.wrappedValue.activeGameId = activeGameId
         
         // Create a dummy Game object with the hardcoded ID
         let dummyGame = Game(entity: Game.entity(), insertInto: nil)
         dummyGame.name = "Game Selection"
-        dummyGame.identifier = hardcodedGameId
+        dummyGame.identifier = activeGameId
         
         // Get all available games to provide metadata for save states
         let allGames = Game.instancesWithPredicate(
@@ -2029,7 +2044,7 @@ extension GamesViewController {
         
         // Launch LuChatViewController directly with nil emulatorCore
         // Include a comment in the question about querying save states
-        let chatViewController = LuChatViewController(game: dummyGame, emulatorCore: nil, isFromGamesViewController: true)
+        let chatViewController = LuChatViewController(game: dummyGame, emulatorCore: nil, isGeneralChat:isGeneralChat, isFromGamesViewController: true)
 
         // Log the information instead
         luLog(.info, "Found \(gamesWithSaveStates.count) games with save states")

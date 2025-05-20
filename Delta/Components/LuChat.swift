@@ -2248,6 +2248,9 @@ extension LuChatViewController: LuSpeechDelegate {
             luLog(.error, "Error activating audio session: \(error.localizedDescription)")
         }
         
+        // Mute game audio while speaking
+        emulatorCore?.audioManager.isEnabled = false
+        
         // Start speech
         luLog(.info, "Starting speech with synthesizer")
         speechSynthesizer.speak(utterance)
@@ -2274,6 +2277,8 @@ extension LuChatViewController: AVSpeechSynthesizerDelegate {
     
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         luLog(.info, "AVSpeechSynthesizerDelegate.didFinish called - Speech completed naturally")
+        // Restore game audio when speech finishes
+        emulatorCore?.audioManager.isEnabled = true
         guard let speakingCell = speakingCell else {
             luLog(.info, "No speaking cell found in didFinish - still calling completion")
             // Call completion even without a cell
@@ -2294,6 +2299,8 @@ extension LuChatViewController: AVSpeechSynthesizerDelegate {
     
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         luLog(.info, "AVSpeechSynthesizerDelegate.didCancel called")
+        // Restore game audio when speech is cancelled
+        emulatorCore?.audioManager.isEnabled = true
         guard let speakingCell = speakingCell else {
             luLog(.info, "No speaking cell found in didCancel - still calling completion")
             // Call completion even without a cell
