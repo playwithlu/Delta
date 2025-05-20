@@ -289,8 +289,8 @@ class UserMessageCell: BaseChatCell {
             messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60).with(priority: .defaultHigh),
             messageView.bottomAnchor.constraint(equalTo: timestampLabel.topAnchor, constant: -2),
             
-            // Use a lower priority for the width constraint
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75).with(priority: .defaultHigh - 1),
+            // Constrain messageView width to a maximum of 75% of the content width
+            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.75).with(priority: .required),
             
             timestampLabel.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
             timestampLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60),
@@ -358,7 +358,8 @@ class LuResponseCell: BaseChatCell {
         followUpContainer.axis = .vertical
         followUpContainer.spacing = 8
         followUpContainer.distribution = .fillProportionally
-        followUpContainer.alignment = .leading
+        // Fill the container width for each follow-up button to ensure uniform indentation
+        followUpContainer.alignment = .fill
         contentView.addSubview(followUpContainer)
         
         // Add timestamp label to contentView
@@ -406,20 +407,11 @@ class LuResponseCell: BaseChatCell {
             timestampLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2)
         ])
         
-        // Set up followUpContainer constraints separately with appropriate priorities
-        // to avoid conflicts during initial layout when contentView might have a temporary width
+        // Align follow-up container directly under and matching bubble width
         NSLayoutConstraint.activate([
-            // Vertical position - high priority
             followUpContainer.topAnchor.constraint(equalTo: messageView.bottomAnchor, constant: 8).with(priority: .required),
-            
-            // Leading constraint - high priority
-            followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor).with(priority: .defaultHigh),
-            
-            // Width constraints - use lower priority to avoid conflicts during initial layout
-            followUpContainer.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -12).with(priority: .defaultHigh - 1),
-            
-            // Ensure stackView has a valid minimum width even during initial layout
-            followUpContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 0).with(priority: .required)
+            followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor).with(priority: .required),
+            followUpContainer.trailingAnchor.constraint(equalTo: messageView.trailingAnchor).with(priority: .required)
         ])
     }
     
@@ -443,9 +435,12 @@ class LuResponseCell: BaseChatCell {
         for (index, question) in questions.prefix(3).enumerated() {
             let button = UIButton(type: .system)
             button.setTitle(question, for: .normal)
+            // Allow multiline and left-align text
             button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
             button.titleLabel?.numberOfLines = 0
             button.titleLabel?.lineBreakMode = .byWordWrapping
+            button.contentHorizontalAlignment = .leading
+            button.titleLabel?.textAlignment = .left
             button.setTitleColor(.systemBlue, for: .normal)
             button.backgroundColor = UIColor.systemGray6
             button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
@@ -458,9 +453,8 @@ class LuResponseCell: BaseChatCell {
             // Add to vertical stack
             followUpContainer.addArrangedSubview(button)
             
-            // Set content hugging priority to ensure buttons expand to show full text
-            button.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            // Ensure buttons wrap text within the allowed width rather than forcing container expansion
+            button.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         }
     }
     
