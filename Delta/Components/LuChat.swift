@@ -456,13 +456,38 @@ class LuResponseCell: BaseChatCell {
         // Remove any existing follow-up buttons
         followUpContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
         
-        guard !questions.isEmpty else { return }
+        // Remove any existing constraints between messageView and followUpContainer
+        contentView.constraints.forEach { constraint in
+            if constraint.firstItem === followUpContainer || constraint.secondItem === followUpContainer {
+                constraint.isActive = false
+            }
+        }
         
-        // Add up to 3 questions
-        for (index, question) in questions.prefix(3).enumerated() {
+        // Also remove any bottom constraints for messageView
+        contentView.constraints.forEach { constraint in
+            if (constraint.firstItem === messageView && constraint.firstAttribute == .bottom) ||
+               (constraint.secondItem === messageView && constraint.secondAttribute == .bottom) {
+                constraint.isActive = false
+            }
+        }
+        
+        if questions.isEmpty {
+            followUpContainer.isHidden = true
+            followUpContainer.alpha = 0
+            // Add simple bottom constraint with standard spacing (4pt)
+            NSLayoutConstraint.activate([
+                messageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4)
+            ])
+            return
+        }
+        
+        followUpContainer.isHidden = false
+        followUpContainer.alpha = 1
+        
+        // Add follow-up buttons
+        for question in questions.prefix(3) {
             let button = UIButton(type: .system)
             button.setTitle(question, for: .normal)
-            // Allow multiline and left-align text
             button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
             button.titleLabel?.numberOfLines = 0
             button.titleLabel?.lineBreakMode = .byWordWrapping
@@ -477,12 +502,20 @@ class LuResponseCell: BaseChatCell {
             button.clipsToBounds = true
             button.addTarget(self, action: #selector(handleFollowUpTap(_:)), for: .touchUpInside)
             
-            // Add to vertical stack
             followUpContainer.addArrangedSubview(button)
-            
-            // Ensure buttons wrap text within the allowed width rather than forcing container expansion
             button.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         }
+        
+        // Set up constraints for follow-up container with proper spacing
+        NSLayoutConstraint.activate([
+            messageView.bottomAnchor.constraint(equalTo: followUpContainer.topAnchor, constant: -8),
+            followUpContainer.leadingAnchor.constraint(equalTo: messageView.leadingAnchor),
+            followUpContainer.trailingAnchor.constraint(equalTo: messageView.trailingAnchor),
+            followUpContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4)
+        ])
+        
+        setNeedsLayout()
+        layoutIfNeeded()
     }
     
     override func prepareForReuse() {
@@ -490,6 +523,7 @@ class LuResponseCell: BaseChatCell {
         
         // Remove all follow-up buttons
         followUpContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        followUpContainer.isHidden = true
         
         // Reset feedback state
         feedbackProvided = false
@@ -582,45 +616,28 @@ class SystemMessageCell: BaseChatCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         
-        // Remove existing constraints from base class to prevent conflicts
-        messageView.removeFromSuperview()
-        messageTextView.removeFromSuperview()
-        
-        // Re-add views with clean hierarchy
-        contentView.addSubview(messageView)
-        messageView.addSubview(messageTextView)
-        
         // Basic styling
         messageView.backgroundColor = .tertiarySystemFill
         messageTextView.textColor = .secondaryLabel
         messageTextView.font = UIFont.systemFont(ofSize: 13)
         messageTextView.textAlignment = .center
+        messageTextView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         
-        // Important: Reset text container properties
-        messageTextView.textContainerInset = .zero
-        messageTextView.textContainer.lineFragmentPadding = 0
-        
-        // Set proper priorities
-        messageView.setContentHuggingPriority(.required, for: .vertical)
-        messageView.setContentCompressionResistancePriority(.required, for: .vertical)
+        // Set proper content priorities
+        messageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        messageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         messageTextView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         messageTextView.setContentCompressionResistancePriority(.required, for: .horizontal)
         
-        // Use flexible constraints that won't conflict with content view's width
+        // Core constraints - use leading/trailing instead of centerX
         NSLayoutConstraint.activate([
-            // Message view constraints - centered with flexible width
-            messageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            // Message view constraints
             messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
             messageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
-            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.8),
-            messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 20),
-            messageView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
-            
-            // Text view fills message view with padding
-            messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor, constant: 12),
-            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor, constant: -12),
-            messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor, constant: 16),
-            messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor, constant: -16)
+            messageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 40),
+            messageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -40),
+            // Ensure text view fills the bubble vertically
+            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor)
         ])
     }
     
@@ -710,7 +727,11 @@ class LuChatViewController: UIViewController {
         // Allow cell contents to expand fully
         tableView.cellLayoutMarginsFollowReadableWidth = false
         
-        tableView.contentInset = UIEdgeInsets(top: 10, left: 0, bottom: 80, right: 0)
+        // Small padding above and below content
+        let padding: CGFloat = 10
+        tableView.contentInset = UIEdgeInsets(top: padding, left: 0, bottom: padding, right: 0)
+        // Match scroll indicators to content inset
+        tableView.scrollIndicatorInsets = tableView.contentInset
         
         return tableView
     }()
