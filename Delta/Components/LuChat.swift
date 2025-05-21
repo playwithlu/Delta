@@ -582,25 +582,46 @@ class SystemMessageCell: BaseChatCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         
+        // Remove existing constraints from base class to prevent conflicts
+        messageView.removeFromSuperview()
+        messageTextView.removeFromSuperview()
+        
+        // Re-add views with clean hierarchy
+        contentView.addSubview(messageView)
+        messageView.addSubview(messageTextView)
+        
+        // Basic styling
         messageView.backgroundColor = .tertiarySystemFill
-        messageTextView.textColor = .secondaryLabel // Adapts to light/dark mode
-        messageTextView.font = UIFont.systemFont(ofSize: 13) // Smaller text
+        messageTextView.textColor = .secondaryLabel
+        messageTextView.font = UIFont.systemFont(ofSize: 13)
+        messageTextView.textAlignment = .center
         
-        // Center align the text
-       messageTextView.textAlignment = .center
+        // Important: Reset text container properties
+        messageTextView.textContainerInset = .zero
+        messageTextView.textContainer.lineFragmentPadding = 0
         
+        // Set proper priorities
+        messageView.setContentHuggingPriority(.required, for: .vertical)
+        messageView.setContentCompressionResistancePriority(.required, for: .vertical)
+        messageTextView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        messageTextView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        
+        // Use flexible constraints that won't conflict with content view's width
         NSLayoutConstraint.activate([
-            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            // Message view constraints - centered with flexible width
             messageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            // Add proper fixed width with required priority
-            messageView.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.85).with(priority: .required - 1),
-            // Force horizontal compression to ensure text wrapping
-            messageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4)
+            messageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            messageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            messageView.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.8),
+            messageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 20),
+            messageView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
+            
+            // Text view fills message view with padding
+            messageTextView.topAnchor.constraint(equalTo: messageView.topAnchor, constant: 12),
+            messageTextView.bottomAnchor.constraint(equalTo: messageView.bottomAnchor, constant: -12),
+            messageTextView.leadingAnchor.constraint(equalTo: messageView.leadingAnchor, constant: 16),
+            messageTextView.trailingAnchor.constraint(equalTo: messageView.trailingAnchor, constant: -16)
         ])
-        
-        // Force text wrapping by setting content compression resistance priority
-        messageTextView.setContentCompressionResistancePriority(.required, for: .vertical)
-        messageTextView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
     
     required init?(coder: NSCoder) {
