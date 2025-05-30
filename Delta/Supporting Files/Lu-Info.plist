@@ -16,5 +16,9 @@
 	<string>https://jo4h0f6euk.execute-api.us-east-1.amazonaws.com/delta</string>
 	<key>LU_BASE_URL_STAGING</key>
 	<string>https://nvp7moi94d.execute-api.us-east-1.amazonaws.com/delta</string>
+	<key>LMNT_API_KEY</key>
+	<string>ak_ZLcaUW4rsMnhnQeCq26RxL</string>
+	<key>ELEVENLABS_API_KEY</key>
+	<string>sk_897a86bd174e118115b5fbe483abf2ea44628e7b419d9625</string>
 </dict>
 </plist>

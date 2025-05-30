@@ -700,6 +700,8 @@ class LuChatViewController: UIViewController {
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var activeVoice: AVSpeechSynthesisVoice?
     private var speakingCell: LuResponseCell?
+    private var lmntAudioPlayer: AVAudioPlayer?
+    private var elevenlabsAudioPlayer: AVAudioPlayer?
     private var textViewHeightConstraint: NSLayoutConstraint?
     
     // Callback for when speech finishes
@@ -1022,47 +1024,31 @@ class LuChatViewController: UIViewController {
             return
         }
         
-        // Get available voices
+        // Prepare list of available voices
         let voices = AVSpeechSynthesisVoice.speechVoices()
-        
-        // Get user's voice preference from Lu settings
+
+        // If the user has a preferred voice, apply it; otherwise use system default
         if let voicePreference = ExperimentalFeatures.shared.Lu.wrappedValue.ttsVoice {
             let voiceIdentifier = voicePreference.rawValue
-            luLog(.info, "🔊 User has selected voice preference: \(voicePreference.displayName) (ID: \(voiceIdentifier))")
+            luLog(.info, "🔊 User selected voice preference: \(voicePreference.displayName) (ID: \(voiceIdentifier))")
             
-            if !voiceIdentifier.isEmpty {
-                // Try to find the selected voice
-                if let selectedVoice = voices.first(where: { $0.identifier == voiceIdentifier }) {
-                    activeVoice = selectedVoice
-                    luLog(.info, "✅ Found and using selected voice: \(selectedVoice.identifier)")
-                } else {
-                    luLog(.info, "⚠️ Selected voice not available on this device: \(voiceIdentifier)")
-                    // Try to find a similar voice based on user preferences
-                    if let similarVoice = findSimilarVoice(to: voiceIdentifier, from: voices) {
-                        activeVoice = similarVoice
-                        luLog(.info, "🔄 Using similar voice as fallback: \(similarVoice.identifier)")
-                    } else {
-                        // Only fall back to default if no similar voice is found
-                        selectDefaultVoice(from: voices)
-                    }
-                }
+            // Try to find the exact voice
+            if let selected = voices.first(where: { $0.identifier == voiceIdentifier }) {
+                activeVoice = selected
+                luLog(.info, "✅ Using exact preferred voice: \(selected.identifier)")
+            } else if let similar = findSimilarVoice(to: voiceIdentifier, from: voices) {
+                // Fallback to a similar voice
+                activeVoice = similar
+                luLog(.info, "🔄 Using fallback similar voice: \(similar.identifier)")
             } else {
-                // Empty string means "System Default"
-                luLog(.info, "🔊 Using system default voice as selected")
-                activeVoice = AVSpeechSynthesisVoice(language: "en-US")
+                // Could not find preferred or similar; clear to use default
+                luLog(.error, "⚠️ Preferred voice not available: \(voiceIdentifier), will use system default")
+                activeVoice = nil
             }
         } else {
-            luLog(.info, "🔊 No voice preference set, using default selection logic")
-            selectDefaultVoice(from: voices)
-        }
-        
-        // Verify voice selection
-        if let voice = activeVoice {
-            luLog(.info, "Active voice set to: \(voice.identifier)")
-        } else {
-            luLog(.error, "Failed to set active voice")
-            activeVoice = AVSpeechSynthesisVoice(language: "en-US")
-            luLog(.info, "Fallback to default voice")
+            // No preference: use the system default voice
+            luLog(.info, "🔊 No TTS voice preference set; using system default voice")
+            activeVoice = nil
         }
     }
     
@@ -2272,38 +2258,49 @@ extension LuChatViewController: LuFollowUpQuestionDelegate {
 extension LuChatViewController: LuSpeechDelegate {
     func speak(messageText: String, for cell: LuResponseCell) {
         luLog(.info, "LuSpeechDelegate.speak called with text length: \(messageText.count)")
-        
+
         // Check if TTS is enabled in settings
-        if !ExperimentalFeatures.shared.Lu.wrappedValue.enableVoiceInteraction {
+        let settings = ExperimentalFeatures.shared.Lu.wrappedValue
+        guard settings.enableVoiceInteraction else {
             luLog(.info, "Text-to-speech is disabled in settings - not speaking message")
             return
         }
-        
-        // Ensure audio session is set up
+
+        // Use LMNT TTS service if selected
+        if settings.ttsService == .lmnt {
+            speakWithLMNTAPI(messageText, for: cell)
+            return
+        }
+
+        // Use ElevenLabs TTS service if selected
+        if settings.ttsService == .elevenlabs {
+            speakWithElevenLabsAPI(messageText, for: cell)
+            return
+        }
+
+        // System TTS path: ensure audio session and speech synthesizer are set up
         setupAudioSession()
-        
-        // Stop any currently playing speech
         stopSpeaking()
-        
-        // Ensure we have an active voice selected
         if activeVoice == nil {
             setupSpeechSynthesizer()
         }
-        
-        // Set up a new utterance
+
+        // Create utterance
         let utterance = AVSpeechUtterance(string: messageText)
-        utterance.voice = activeVoice
-        utterance.rate = 0.5  // Slightly slower rate for better clarity
-        utterance.pitchMultiplier = 1.1  // Slight pitch increase for "upbeat" tone
+        if let voice = activeVoice {
+            utterance.voice = voice
+        }
+        utterance.rate = 0.5
+        utterance.pitchMultiplier = 1.1
         utterance.volume = 1.0
-        
+
         // Store reference to the cell we're speaking for
-        self.speakingCell = cell
-        
-        // Log voice being used for this utterance with more details
+        speakingCell = cell
+
+        // Log voice selection
         if let voice = utterance.voice {
             luLog(.info, "🗣️ Speaking with voice: \(voice.identifier)")
-            if let preference = ExperimentalFeatures.shared.Lu.wrappedValue.ttsVoice {
+            if let preference = settings.ttsVoice {
                 luLog(.info, "📱 Using voice matching user preference: \(preference.displayName)")
             } else {
                 luLog(.info, "📱 Using default voice (no user preference set)")
@@ -2311,7 +2308,7 @@ extension LuChatViewController: LuSpeechDelegate {
         } else {
             luLog(.error, "⚠️ No voice set for utterance, system will use default")
         }
-        
+
         // Configure audio session
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
@@ -2319,11 +2316,9 @@ extension LuChatViewController: LuSpeechDelegate {
         } catch {
             luLog(.error, "Error activating audio session: \(error.localizedDescription)")
         }
-        
-        // Mute game audio while speaking
+
+        // Mute game audio and start system speech
         emulatorCore?.audioManager.isEnabled = false
-        
-        // Start speech
         luLog(.info, "Starting speech with synthesizer")
         speechSynthesizer.speak(utterance)
     }
@@ -2392,6 +2387,205 @@ extension LuChatViewController: AVSpeechSynthesizerDelegate {
     }
 }
 
+// MARK: - LMNT TTS Service
+private extension LuChatViewController {
+    /// Perform speech synthesis using the ElevenLabs TTS API and play the resulting audio.
+    func speakWithElevenLabsAPI(_ text: String, for cell: LuResponseCell) {
+        luLog(.info, "ElevenLabs TTS speaking with text length: \(text.count)")
+        guard let plistURL = Bundle.main.url(forResource: "Lu-Info", withExtension: "plist"),
+              let info = NSDictionary(contentsOf: plistURL),
+              let apiKey = info["ELEVENLABS_API_KEY"] as? String, !apiKey.isEmpty else {
+            luLog(.error, "ELEVENLABS API key not found in Lu-Info.plist; cannot use ElevenLabs TTS service.")
+            onSpeechFinished?()
+            return
+        }
+        let settings = ExperimentalFeatures.shared.Lu.wrappedValue
+        guard let voiceId = settings.ttsVoice?.rawValue else {
+            luLog(.error, "No ElevenLabs voice selected; cannot use ElevenLabs TTS service.")
+            onSpeechFinished?()
+            return
+        }
+
+        let modelId = "eleven_multilingual_v2"
+        let urlString = "https://api.elevenlabs.io/v1/text-to-speech/\(voiceId)?output_format=mp3_44100_128"
+        guard let url = URL(string: urlString) else {
+            luLog(.error, "Invalid ElevenLabs TTS URL: \(urlString)")
+            onSpeechFinished?()
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
+
+        let body: [String: Any] = [
+            "text": text,
+            "model_id": modelId
+        ]
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            luLog(.error, "Failed to serialize ElevenLabs TTS request body: \(error.localizedDescription)")
+            onSpeechFinished?()
+            return
+        }
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                DispatchQueue.main.async {
+                    luLog(.error, "ElevenLabs TTS request failed: \(error.localizedDescription)")
+                    self.onSpeechFinished?()
+                }
+                return
+            }
+            guard let data = data else {
+                DispatchQueue.main.async {
+                    luLog(.error, "ElevenLabs TTS response has no data")
+                    self.onSpeechFinished?()
+                }
+                return
+            }
+            do {
+                let player = try AVAudioPlayer(data: data)
+                player.delegate = self
+                player.prepareToPlay()
+                DispatchQueue.main.async {
+                    self.emulatorCore?.audioManager.isEnabled = false
+                    self.speakingCell = cell
+                    cell.updateSpeakingState(isSpeaking: true)
+                    self.elevenlabsAudioPlayer = player
+                    luLog(.info, "Playing ElevenLabs TTS audio")
+                    player.play()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    luLog(.error, "Failed to play ElevenLabs TTS audio: \(error.localizedDescription)")
+                    self.onSpeechFinished?()
+                }
+            }
+        }
+        task.resume()
+    }
+    func speakWithLMNTAPI(_ text: String, for cell: LuResponseCell) {
+        luLog(.info, "LMNT TTS speaking with text length: \(text.count)")
+        guard let plistURL = Bundle.main.url(forResource: "Lu-Info", withExtension: "plist"),
+              let info = NSDictionary(contentsOf: plistURL),
+              let apiKey = info["LMNT_API_KEY"] as? String, !apiKey.isEmpty else {
+            luLog(.error, "LMNT API key not found in Lu-Info.plist; cannot use LMNT TTS service.")
+            onSpeechFinished?()
+            return
+        }
+
+        let settings = ExperimentalFeatures.shared.Lu.wrappedValue
+        let baseURLString: String
+        switch settings.apiEnvironment {
+        case .production:
+            baseURLString = "https://api.lmnt.com"
+        case .staging:
+            baseURLString = "https://staging.api.lmnt.com"
+        case .development:
+            baseURLString = "https://dev.api.lmnt.com"
+        }
+        guard let url = URL(string: baseURLString)?.appendingPathComponent("/v1/ai/speech/bytes") else {
+            luLog(.error, "Invalid LMNT TTS URL")
+            onSpeechFinished?()
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "text": text,
+            "voice": settings.ttsVoice?.rawValue ?? "zoe",
+            "model": "aurora",
+            "language": "auto",
+            "format": "mp3",
+            "sample_rate": 24000,
+            "speed": 1,
+            "conversational": true,
+            "top_p": 1,
+            "temperature": 1
+        ]
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            luLog(.error, "Failed to serialize LMNT TTS request body: \(error.localizedDescription)")
+            onSpeechFinished?()
+            return
+        }
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                DispatchQueue.main.async {
+                    luLog(.error, "LMNT TTS request failed: \(error.localizedDescription)")
+                    self.onSpeechFinished?()
+                }
+                return
+            }
+            guard let data = data else {
+                DispatchQueue.main.async {
+                    luLog(.error, "LMNT TTS response has no data")
+                    self.onSpeechFinished?()
+                }
+                return
+            }
+            do {
+                let player = try AVAudioPlayer(data: data)
+                player.delegate = self
+                player.prepareToPlay()
+                DispatchQueue.main.async {
+                    self.emulatorCore?.audioManager.isEnabled = false
+                    self.speakingCell = cell
+                    cell.updateSpeakingState(isSpeaking: true)
+                    self.lmntAudioPlayer = player
+                    luLog(.info, "Playing LMNT TTS audio")
+                    player.play()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    luLog(.error, "Failed to play LMNT TTS audio: \(error.localizedDescription)")
+                    self.onSpeechFinished?()
+                }
+            }
+        }
+        task.resume()
+    }
+}
+
+// MARK: - AVAudioPlayerDelegate
+extension LuChatViewController: AVAudioPlayerDelegate {
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        if player === elevenlabsAudioPlayer {
+            luLog(.info, "ElevenLabs TTS audio finished playing, success: \(flag)")
+            emulatorCore?.audioManager.isEnabled = true
+            speakingCell?.updateSpeakingState(isSpeaking: false)
+            speakingCell = nil
+            onSpeechFinished?()
+            elevenlabsAudioPlayer = nil
+        } else {
+            luLog(.info, "LMNT TTS audio finished playing, success: \(flag)")
+            emulatorCore?.audioManager.isEnabled = true
+            speakingCell?.updateSpeakingState(isSpeaking: false)
+            speakingCell = nil
+            onSpeechFinished?()
+            lmntAudioPlayer = nil
+        }
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        luLog(.error, "LMNT TTS audio decode error: \(error?.localizedDescription ?? "unknown")")
+        emulatorCore?.audioManager.isEnabled = true
+        speakingCell?.updateSpeakingState(isSpeaking: false)
+        speakingCell = nil
+        onSpeechFinished?()
+        lmntAudioPlayer = nil
+    }
+}
+
+// MARK: - LMNT Request Models
 private struct LuRequest: Codable {
     let game_id: String
     let question: String

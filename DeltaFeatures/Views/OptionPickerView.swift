@@ -14,13 +14,19 @@ public struct OptionPickerView<Value: LocalizedOptionValue>: View
     var name: LocalizedStringKey
     var options: [Value]
     
-    @Binding
-    var selectedValue: Value
+    @Binding var selectedValue: Value
+
+    public init(name: LocalizedStringKey, options: [Value], selectedValue: Binding<Value>) {
+        self.name = name
+        self.options = options
+        self._selectedValue = selectedValue
+    }
 
     public var body: some View {
         Picker(name, selection: $selectedValue) {
             ForEach(options, id: \.self) { value in
-                value.localizedDescription
+                // Tag each option so the Picker selection matches correctly, including nil
+                value.localizedDescription.tag(value)
             }
         }
         .pickerStyle(.menu)

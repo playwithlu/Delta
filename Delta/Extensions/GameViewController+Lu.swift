@@ -383,9 +383,6 @@ class SpeechManager: NSObject, SFSpeechRecognizerDelegate {
             }
         }
         
-        // Reset partial results tracking
-        hasReceivedPartialResults = false
-        lastPartialResult = ""
         
         // Notify delegate that speech recognition stopped
         DispatchQueue.main.async {
@@ -1532,8 +1529,7 @@ extension GameViewController {
         
         if let error = error as NSError? {
             // Handle specific error domains by comparing strings
-            if error.domain == "kAFAssistantErrorDomain" ||
-               error.domain == "com.apple.speech.recognition.error" {
+            if error.domain == "com.apple.speech.recognition.error" {
                 message = "Speech recognition access denied. Please enable it in Settings."
             } else if error.domain == "com.apple.coreaudio.avfaudio.error" {
                 message = "Cannot access microphone. Please check permissions in Settings."
