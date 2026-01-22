@@ -18,6 +18,20 @@ Lu is an Experimental Feature. The availability gate is implemented in `Purchase
 - Otherwise, features require active patron or an eligible in-app purchase.
 
 For local testing, ensure `SWIFT_ACTIVE_COMPILATION_CONDITIONS` includes `BETA` for your build configuration.
+
+## Experimental Feature Configuration (Lu)
+
+Lu options live in `Delta/Experimental Features/Features/Lu.swift`:
+
+- `didShowWelcomeMessage` (hidden): whether the first‑use notice was shown.
+- `activeGameId` (hidden): set after `/check-rom` returns a `game_id`.
+- `activeSaveStateId` (hidden): set to the most recent save state ID (if any).
+- `shareGameplayData` (visible): if enabled, allows Lu to include gameplay context in requests (current implementation still always sends context header; future work can gate additional data).
+- `rememberConversations` (visible): if enabled, `remember_conversation` is sent in the Ask payload and UI indicates the conversation will be remembered.
+
+These options are read/written via:
+
+- `ExperimentalFeatures.shared.Lu.wrappedValue.<option>`
 ## Authentication & Headers
 
 Lu requests are **unauthenticated** in the current implementation. There is no token or API key included in requests.
@@ -209,6 +223,28 @@ Request body:
 ```
 
 Response (200 or 201): treated as success.
+
+### Additional Payload Examples
+
+Ask with conversation memory disabled:
+
+```json
+{
+  "game_id": "some-game-id",
+  "question": "Where do I find the hookshot?",
+  "remember_conversation": false
+}
+```
+
+Feedback without a message body:
+
+```json
+{
+  "message_id": "abc123",
+  "feedback": "NEGATIVE",
+  "feedback_message": null
+}
+```
 
 ### UI/UX Changes
 
